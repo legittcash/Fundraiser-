@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Help Lucy Fight Breast Cancer</title>
+
+<!-- Paystack Inline Checkout script (loads Paystack's popup payment widget) -->
+<script src="https://js.paystack.co/v1/inline.js"></script>
+
+<style>
+  :root {
+    --pink: #ff2e88;
+    --pink-dark: #e0217a;
+    --green: #22c55e;
+    --bg: #f6f7fb;
+    --card-bg: #ffffff;
+    --text-dark: #1f2937;
+    --text-muted: #6b7280;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background: var(--bg);
+    display: flex;
+    justify-content: center;
+    align-items: flex-start;
+    min-height: 100vh;
+    padding: 24px 12px;
+  }
+
+  .card {
+    background: var(--card-bg);
+    max-width: 420px;
+    width: 100%;
+    border-radius: 20px;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.08);
+    overflow: hidden;
+  }
+
+  .hero-img {
+    width: 100%;
+    height: 260px;
+    object-fit: cover;
+    display: block;
+  }
+
+  .content {
+    padding: 20px 22px 26px;
+  }
+
+  h1 {
+    font-size: 1.4rem;
+    margin: 0 0 6px;
+    color: var(--text-dark);
+  }
+
+  .name-tag {
+    display: inline-block;
+    background: #ffe4f0;
+    color: var(--pink-dark);
+    font-weight: 600;
+    font-size: 0.85rem;
+    padding: 4px 10px;
+    border-radius: 999px;
+    margin-bottom: 10px;
+  }
+
+  p.description {
+    color: var(--text-muted);
+    font-size: 0.95rem;
+    line-height: 1.5;
+    margin: 10px 0 20px;
+  }
+
+  .stats-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    margin-bottom: 8px;
+  }
+
+  .amount-raised {
+    font-size: 1.6rem;
+    font-weight: 700;
+    color: var(--text-dark);
+  }
+
+  .percentage {
+    font-weight: 600;
+    color: var(--green);
+    font-size: 1rem;
+  }
+
+  .goal-text {
+    color: var(--text-muted);
+    font-size: 0.85rem;
+    margin-bottom: 14px;
+  }
+
+  /* Progress bar track */
+  .progress-track {
+    background: #e5e7eb;
+    border-radius: 999px;
+    height: 14px;
+    width: 100%;
+    overflow: hidden;
+    margin-bottom: 14px;
+  }
+
+  /* Animated fill - width is set dynamically by JS based on backend data */
+  .progress-fill {
+    background: linear-gradient(90deg, #4ade80, var(--green));
+    height: 100%;
+    width: 0%; /* starts at 0, animates to real % once data loads */
+    border-radius: 999px;
+    transition: width 1s ease-in-out;
+  }
+
+  .donor-count {
+    color: var(--text-muted);
+    font-size: 0.9rem;
+    margin-bottom: 20px;
+  }
+
+  .donor-count strong {
+    color: var(--text-dark);
+  }
+
+  .donate-btn {
+    width: 100%;
+    background: var(--pink);
+    color: #fff;
+    border: none;
+    padding: 15px;
+    font-size: 1.05rem;
+    font-weight: 700;
+    border-radius: 14px;
+    cursor: pointer;
+    transition: background 0.2s ease, transform 0.1s ease;
+  }
+
+  .donate-btn:hover {
+    background: var(--pink-dark);
+  }
+
+  .donate-btn:active {
+    transform: scale(0.98);
+  }
+
+  .donate-btn:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+
+  .amount-input-wrap {
+    margin-bottom: 14px;
+  }
+
+  .amount-input-wrap label {
+    display: block;
+    font-size: 0.85rem;
+    color: var(--text-muted);
+    margin-bottom: 6px;
+  }
+
+  .amount-input-wrap input,
+  .amount-input-wrap input[type="email"] {
+    width: 100%;
+    padding: 12px 14px;
+    border: 1px solid #e5e7eb;
+    border-radius: 10px;
+    font-size: 1rem;
+    margin-bottom: 10px;
+  }
+
+  .status-msg {
+    text-align: center;
+    font-size: 0.85rem;
+    margin-top: 12px;
+    color: var(--text-muted);
+  }
+
+  .status-msg.success { color: var(--green); font-weight: 600; }
+  .status-msg.error { color: #dc2626; font-weight: 600; }
+</style>
+</head>
+<body>
+
+<div class="card">
+  <!--
+    HERO IMAGE
+    This is a placeholder royalty-free image saved at images/lucy.jpg.
+    Replace images/lucy.jpg with Lucy's real photo whenever you're ready —
+    the filename and path stay the same, so nothing else needs to change.
+  -->
+  <img class="hero-img" src="images/lucy.jpg" alt="Lucy" />
+
+  <div class="content">
+    <span class="name-tag">Lucy's Story</span>
+    <h1>Help Lucy Fight Breast Cancer</h1>
+
+    <p class="description">
+      Lucy was recently diagnosed with breast cancer and urgently needs
+      financial support to cover surgery, chemotherapy sessions, hospital
+      care, and ongoing medication. Every donation — no matter the size —
+      brings her closer to the treatment she needs to fight this illness
+      and reclaim her health. Your kindness can be the difference between
+      fear and hope for Lucy and her family. Thank you for standing with her.
+    </p>
+
+    <!-- LIVE FUNDRAISING STATS (filled in by JavaScript from /api/progress) -->
+    <div class="stats-row">
+      <span class="amount-raised" id="amountRaised">₦0</span>
+      <span class="percentage" id="percentage">0%</span>
+    </div>
+    <div class="goal-text">Goal: <span id="goalAmount">₦1,000</span></div>
+
+    <div class="progress-track">
+      <div class="progress-fill" id="progressFill"></div>
+    </div>
+
+    <div class="donor-count">
+      <strong id="donorCount">0</strong> people have donated
+    </div>
+
+    <!-- Donor details, collected before triggering Paystack popup -->
+    <div class="amount-input-wrap">
+      <label for="donorEmail">Your email (for payment receipt)</label>
+      <input type="email" id="donorEmail" placeholder="you@example.com" required />
+
+      <label for="donorAmount">Amount to donate (₦)</label>
+      <input type="number" id="donorAmount" placeholder="e.g. 500" min="100" required />
+    </div>
+
+    <button class="donate-btn" id="donateBtn">Donate Now 💗</button>
+
+    <div class="status-msg" id="statusMsg"></div>
+  </div>
+</div>
+
+<script>
+  /*
+    =========================================================
+    STEP 1: LOAD LIVE PROGRESS FROM THE BACKEND
+    =========================================================
+    When the page loads, we call our own serverless function
+    at /api/progress. That function reads the "fundraiser" row
+    from Supabase and returns the current totals as JSON.
+    We then use that data to fill in the numbers and animate
+    the green progress bar.
+  */
+  async function loadProgress() {
+    try {
+      const res = await fetch('/api/progress');
+      const data = await res.json();
+
+      const raised = Number(data.raised_amount) || 0;
+      const goal = Number(data.goal_amount) || 1000;
+      const donors = Number(data.donor_count) || 0;
+      const percent = Math.min(100, Math.round((raised / goal) * 100));
+
+      document.getElementById('amountRaised').textContent = `₦${raised.toLocaleString()}`;
+      document.getElementById('goalAmount').textContent = `₦${goal.toLocaleString()}`;
+      document.getElementById('percentage').textContent = `${percent}%`;
+      document.getElementById('donorCount').textContent = donors;
+
+      // Animate the bar by setting its width — the CSS "transition" makes it slide smoothly
+      document.getElementById('progressFill').style.width = `${percent}%`;
+    } catch (err) {
+      console.error('Failed to load progress:', err);
+    }
+  }
+
+  // Load progress as soon as the page opens
+  loadProgress();
+
+  /*
+    =========================================================
+    STEP 2: HANDLE THE "DONATE NOW" BUTTON
+    =========================================================
+    We never touch the Paystack SECRET key on the frontend.
+    Only the PUBLIC key (safe to expose) is used here to open
+    the Paystack Inline popup. The actual confirmation of
+    payment happens later on the backend via a webhook, which
+    is the only trustworthy source of truth for "did this
+    payment really succeed".
+  */
+  const donateBtn = document.getElementById('donateBtn');
+  const statusMsg = document.getElementById('statusMsg');
+
+  // The public key is injected into this page at build/deploy time.
+  // On Vercel, we recommend replacing this placeholder using a small
+  // inline script tag generated from the PAYSTACK_PUBLIC_KEY env var
+  // (see README.md for the simplest beginner-friendly way to do this).
+  const PAYSTACK_PUBLIC_KEY = window.PAYSTACK_PUBLIC_KEY || 'REPLACE_WITH_YOUR_PAYSTACK_PUBLIC_KEY';
+
+  donateBtn.addEventListener('click', () => {
+    const email = document.getElementById('donorEmail').value.trim();
+    const amount = Number(document.getElementById('donorAmount').value);
+
+    if (!email || !email.includes('@')) {
+      statusMsg.textContent = 'Please enter a valid email address.';
+      statusMsg.className = 'status-msg error';
+      return;
+    }
+    if (!amount || amount < 100) {
+      statusMsg.textContent = 'Minimum donation is ₦100.';
+      statusMsg.className = 'status-msg error';
+      return;
+    }
+
+    statusMsg.textContent = '';
+    statusMsg.className = 'status-msg';
+    donateBtn.disabled = true;
+    donateBtn.textContent = 'Opening secure payment...';
+
+    // Open the Paystack Inline popup
+    const handler = PaystackPop.setup({
+      key: PAYSTACK_PUBLIC_KEY,
+      email: email,
+      amount: amount * 100, // Paystack expects the amount in kobo (₦1 = 100 kobo)
+      currency: 'NGN',
+      metadata: {
+        custom_fields: [
+          { display_name: 'Fundraiser', variable_name: 'fundraiser', value: 'Help Lucy Fight Breast Cancer' }
+        ]
+      },
+      callback: function (response) {
+        // This fires immediately after the popup reports success.
+        // IMPORTANT: this is just the frontend's view of things.
+        // The real, trusted confirmation happens server-side via
+        // the Paystack webhook (api/paystack-webhook.js), which
+        // updates Supabase and therefore the progress bar.
+        statusMsg.textContent = 'Payment received! Updating progress bar...';
+        statusMsg.className = 'status-msg success';
+        donateBtn.disabled = false;
+        donateBtn.textContent = 'Donate Now 💗';
+
+        // Give the webhook a couple of seconds to reach our server
+        // and update Supabase, then refresh the numbers on screen.
+        setTimeout(loadProgress, 3000);
+      },
+      onClose: function () {
+        donateBtn.disabled = false;
+        donateBtn.textContent = 'Donate Now 💗';
+        statusMsg.textContent = 'Payment window closed.';
+        statusMsg.className = 'status-msg';
+      }
+    });
+
+    handler.openIframe();
+  });
+</script>
+
+</body>
+</html>
