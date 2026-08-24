@@ -1,0 +1,669 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Patient Campaign</title>
+
+<!-- Paystack Inline Checkout script (loads Paystack's popup payment widget) -->
+<script src="https://js.paystack.co/v1/inline.js"></script>
+
+<style>
+  :root {
+    --pink: #ff2e88;
+    --pink-dark: #e0217a;
+    --green: #22c55e;
+    --bg: #f6f7fb;
+    --card-bg: #ffffff;
+    --text-dark: #1f2937;
+    --text-muted: #6b7280;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background: var(--bg);
+    display: flex;
+    justify-content: center;
+    align-items: flex-start;
+    min-height: 100vh;
+    padding: 24px 12px;
+  }
+
+  .back-link-wrap {
+    max-width: 420px;
+    width: 100%;
+    margin: 0 auto;
+  }
+
+  .back-link {
+    display: inline-block;
+    color: var(--text-muted);
+    text-decoration: none;
+    font-size: 0.9rem;
+    margin-bottom: 10px;
+  }
+
+  .card {
+    background: var(--card-bg);
+    max-width: 420px;
+    width: 100%;
+    border-radius: 20px;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.08);
+    overflow: hidden;
+  }
+
+  .hero-img {
+    width: 100%;
+    height: 260px;
+    object-fit: cover;
+    display: block;
+    background: #f0f0f3;
+  }
+
+  .content {
+    padding: 20px 22px 26px;
+  }
+
+  h1 {
+    font-size: 1.4rem;
+    margin: 0 0 6px;
+    color: var(--text-dark);
+  }
+
+  .name-tag {
+    display: inline-block;
+    background: #ffe4f0;
+    color: var(--pink-dark);
+    font-weight: 600;
+    font-size: 0.85rem;
+    padding: 4px 10px;
+    border-radius: 999px;
+    margin-bottom: 10px;
+  }
+
+  .hospital-tag {
+    color: var(--text-muted);
+    font-size: 0.85rem;
+    margin-bottom: 4px;
+  }
+
+  .archived-badge {
+    display: inline-block;
+    background: #fef3c7;
+    color: #92400e;
+    font-weight: 600;
+    font-size: 0.8rem;
+    padding: 3px 9px;
+    border-radius: 999px;
+    margin-bottom: 10px;
+  }
+
+  p.description {
+    color: var(--text-muted);
+    font-size: 0.95rem;
+    line-height: 1.5;
+    margin: 10px 0 20px;
+    white-space: pre-line;
+  }
+
+  .stats-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    margin-bottom: 8px;
+  }
+
+  .amount-raised {
+    font-size: 1.6rem;
+    font-weight: 700;
+    color: var(--text-dark);
+  }
+
+  .percentage {
+    font-weight: 600;
+    color: var(--green);
+    font-size: 1rem;
+  }
+
+  .goal-text {
+    color: var(--text-muted);
+    font-size: 0.85rem;
+    margin-bottom: 14px;
+  }
+
+  /* Progress bar track */
+  .progress-track {
+    background: #e5e7eb;
+    border-radius: 999px;
+    height: 14px;
+    width: 100%;
+    overflow: hidden;
+    margin-bottom: 14px;
+  }
+
+  /* Animated fill - width is set dynamically by JS based on backend data */
+  .progress-fill {
+    background: linear-gradient(90deg, #4ade80, var(--green));
+    height: 100%;
+    width: 0%; /* starts at 0, animates to real % once data loads */
+    border-radius: 999px;
+    transition: width 1s ease-in-out;
+  }
+
+  .donor-count {
+    color: var(--text-muted);
+    font-size: 0.9rem;
+    margin-bottom: 20px;
+  }
+
+  .donor-count strong {
+    color: var(--text-dark);
+  }
+
+  .donate-btn {
+    width: 100%;
+    background: var(--pink);
+    color: #fff;
+    border: none;
+    padding: 15px;
+    font-size: 1.05rem;
+    font-weight: 700;
+    border-radius: 14px;
+    cursor: pointer;
+    transition: background 0.2s ease, transform 0.1s ease;
+  }
+
+  .donate-btn:hover {
+    background: var(--pink-dark);
+  }
+
+  .donate-btn:active {
+    transform: scale(0.98);
+  }
+
+  .donate-btn:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+
+  .amount-input-wrap {
+    margin-bottom: 14px;
+  }
+
+  .amount-input-wrap label {
+    display: block;
+    font-size: 0.85rem;
+    color: var(--text-muted);
+    margin-bottom: 6px;
+  }
+
+  .amount-input-wrap input,
+  .amount-input-wrap input[type="email"] {
+    width: 100%;
+    padding: 12px 14px;
+    border: 1px solid #e5e7eb;
+    border-radius: 10px;
+    font-size: 1rem;
+    margin-bottom: 10px;
+  }
+
+  .status-msg {
+    text-align: center;
+    font-size: 0.85rem;
+    margin-top: 12px;
+    color: var(--text-muted);
+  }
+
+  .status-msg.success { color: var(--green); font-weight: 600; }
+  .status-msg.error { color: #dc2626; font-weight: 600; }
+
+  .loading-msg, .error-msg {
+    max-width: 420px;
+    width: 100%;
+    text-align: center;
+    color: var(--text-muted);
+    padding: 60px 20px;
+  }
+
+  .goal-achieved-badge {
+    display: inline-block;
+    background: #dcfce7;
+    color: #166534;
+    font-weight: 700;
+    font-size: 0.8rem;
+    padding: 4px 10px;
+    border-radius: 999px;
+    margin-bottom: 8px;
+  }
+
+  .checkbox-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 14px;
+  }
+
+  .checkbox-row input[type="checkbox"] {
+    width: 17px;
+    height: 17px;
+    margin: 0;
+  }
+
+  .checkbox-row label {
+    font-size: 0.88rem;
+    color: var(--text-dark);
+    margin: 0;
+    cursor: pointer;
+  }
+
+  .field-error {
+    color: #dc2626;
+    font-size: 0.8rem;
+    margin: -6px 0 10px;
+  }
+
+  /* Recent donors section */
+  .recent-donors {
+    margin-top: 26px;
+  }
+
+  .recent-donors h2 {
+    font-size: 1rem;
+    color: var(--text-dark);
+    margin: 0 0 12px;
+  }
+
+  .donor-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    padding: 10px 0;
+    border-bottom: 1px solid #f0f0f3;
+    font-size: 0.88rem;
+  }
+
+  .donor-item:last-child { border-bottom: none; }
+
+  .donor-item .donor-name {
+    color: var(--text-dark);
+    font-weight: 600;
+  }
+
+  .donor-item .donor-when {
+    color: var(--text-muted);
+    font-size: 0.78rem;
+    display: block;
+    margin-top: 2px;
+  }
+
+  .donor-item .donor-amount {
+    color: var(--green);
+    font-weight: 700;
+    white-space: nowrap;
+  }
+
+  .no-donors-msg {
+    color: var(--text-muted);
+    font-size: 0.88rem;
+    text-align: center;
+    padding: 14px 0;
+  }
+</style>
+</head>
+<body>
+
+<div id="pageContent">
+  <div class="loading-msg" id="loadingMsg">Loading campaign...</div>
+</div>
+
+<script>
+  /*
+    =========================================================
+    STEP 0: WORK OUT WHICH CAMPAIGN TO SHOW
+    =========================================================
+    The homepage links here as campaign.html?slug=lucy-x7k2.
+    We read that slug from the URL, then ask our backend for
+    that specific patient's full details.
+  */
+  const urlParams = new URLSearchParams(window.location.search);
+  const slug = urlParams.get('slug');
+
+  const pageContent = document.getElementById('pageContent');
+
+  if (!slug) {
+    pageContent.innerHTML = '<div class="error-msg">No campaign was specified. <a href="index.html">Go back to all campaigns</a>.</div>';
+  } else {
+    loadCampaign(slug);
+  }
+
+  let currentCampaign = null;
+
+  async function loadCampaign(slug) {
+    try {
+      const res = await fetch(`/api/campaign?slug=${encodeURIComponent(slug)}`);
+      if (!res.ok) {
+        pageContent.innerHTML = '<div class="error-msg">This campaign could not be found. <a href="index.html">Go back to all campaigns</a>.</div>';
+        return;
+      }
+      const data = await res.json();
+      currentCampaign = data.campaign;
+      renderCampaign(currentCampaign);
+    } catch (err) {
+      console.error('Failed to load campaign:', err);
+      pageContent.innerHTML = '<div class="error-msg">Something went wrong loading this campaign. Please try again.</div>';
+    }
+  }
+
+  function renderCampaign(campaign) {
+    document.title = `Help ${campaign.patient_name}`;
+
+    const imageUrl = campaign.image_url || 'images/lucy.jpg';
+    const archivedBadge = campaign.status === 'archived'
+      ? '<span class="archived-badge">This campaign has ended — thank you to everyone who gave 💛</span><br/>'
+      : '';
+
+    pageContent.innerHTML = `
+      <div class="back-link-wrap">
+        <a class="back-link" href="index.html">&larr; All campaigns</a>
+      </div>
+      <div class="card">
+        <img class="hero-img" src="${escapeHtml(imageUrl)}" alt="${escapeHtml(campaign.patient_name)}" />
+        <div class="content">
+          <span class="name-tag">${escapeHtml(campaign.patient_name)}'s Story</span>
+          ${campaign.hospital ? `<div class="hospital-tag">🏥 ${escapeHtml(campaign.hospital)}</div>` : ''}
+          <h1>Help ${escapeHtml(campaign.patient_name)}${campaign.diagnosis ? ` Fight ${escapeHtml(campaign.diagnosis)}` : ''}</h1>
+          ${archivedBadge}
+
+          <p class="description">${escapeHtml(campaign.story || '')}</p>
+
+          <!-- LIVE FUNDRAISING STATS (filled in by JavaScript from /api/progress) -->
+          <div id="goalAchievedBadgeWrap"></div>
+          <div class="stats-row">
+            <span class="amount-raised" id="amountRaised">₦0</span>
+            <span class="percentage" id="percentage">0%</span>
+          </div>
+          <div class="goal-text" id="goalText">Goal: ₦0</div>
+
+          <div class="progress-track">
+            <div class="progress-fill" id="progressFill"></div>
+          </div>
+
+          <div class="donor-count">
+            <strong id="donorCount">0</strong> people have donated
+          </div>
+
+          ${campaign.status === 'active' ? `
+            <!-- Donor details, collected before triggering Paystack popup -->
+            <div class="amount-input-wrap">
+              <label for="donorName">Your name *</label>
+              <input type="text" id="donorName" placeholder="e.g. Ada Obi" required />
+              <div class="field-error" id="donorNameError" style="display:none;"></div>
+
+              <label for="donorEmail">Your email (optional, for a payment receipt)</label>
+              <input type="email" id="donorEmail" placeholder="you@example.com" />
+
+              <div class="checkbox-row">
+                <input type="checkbox" id="donorAnonymous" />
+                <label for="donorAnonymous">Donate anonymously (hide my name from other visitors)</label>
+              </div>
+
+              <label for="donorAmount">Amount to donate (₦)</label>
+              <input type="number" id="donorAmount" placeholder="e.g. 500" min="100" required />
+            </div>
+
+            <button class="donate-btn" id="donateBtn">Donate Now 💗</button>
+          ` : ''}
+
+          <div class="status-msg" id="statusMsg"></div>
+
+          <!-- RECENT DONORS (filled in by JavaScript from /api/donations) -->
+          <div class="recent-donors">
+            <h2>Recent Donors</h2>
+            <div id="recentDonorsList">
+              <p class="no-donors-msg">Loading...</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+
+    // Load live totals now that the card exists in the page
+    loadProgress(campaign.id);
+    loadRecentDonors(campaign.id);
+
+    if (campaign.status === 'active') {
+      attachDonateHandler(campaign);
+    }
+  }
+
+  // Basic HTML-escaping so patient-entered text (name, story, hospital)
+  // can never break the page layout or inject scripts.
+  function escapeHtml(str) {
+    const div = document.createElement('div');
+    div.textContent = str ?? '';
+    return div.innerHTML;
+  }
+
+  /*
+    =========================================================
+    STEP 1: LOAD LIVE PROGRESS FROM THE BACKEND
+    =========================================================
+    We call /api/progress?id=<campaign id>. That endpoint reads
+    this ONE campaign's row from Supabase and returns its current
+    totals as JSON — the RAW, uncapped raised_amount, exactly as
+    stored in the database. We then use that data to fill in the
+    numbers and animate the green progress bar.
+
+    IMPORTANT: capping happens only here, visually, in the browser.
+    The database and /api/progress always keep reporting the true
+    amount raised, even past 100% of the goal — we just never let
+    the bar itself be drawn wider than "full".
+  */
+  async function loadProgress(campaignId) {
+    try {
+      const res = await fetch(`/api/progress?id=${encodeURIComponent(campaignId)}`);
+      const data = await res.json();
+
+      const raised = Number(data.raised_amount) || 0;
+      const goal = Number(data.goal_amount) || 1000;
+      const donors = Number(data.donor_count) || 0;
+
+      // The TRUE percentage (used for the "50%" style number, and to
+      // decide whether the goal has been hit) can go above 100.
+      const truePercent = Math.round((raised / goal) * 100);
+      // The bar's WIDTH is always capped at 100 — it can never overflow.
+      const visualPercent = Math.min(100, truePercent);
+      const goalReached = raised >= goal;
+
+      document.getElementById('amountRaised').textContent = `₦${raised.toLocaleString()}`;
+      document.getElementById('donorCount').textContent = donors;
+
+      const goalTextEl = document.getElementById('goalText');
+      const percentEl = document.getElementById('percentage');
+      const badgeWrap = document.getElementById('goalAchievedBadgeWrap');
+
+      if (goalReached) {
+        // Once the goal is met (or exceeded), show a clear "Goal
+        // Achieved" status plus the real numbers — never a percentage
+        // over 100%.
+        badgeWrap.innerHTML = '<span class="goal-achieved-badge">🎉 Goal Achieved</span>';
+        goalTextEl.textContent = `₦${raised.toLocaleString()} raised of ₦${goal.toLocaleString()} goal`;
+        percentEl.textContent = '100%';
+      } else {
+        badgeWrap.innerHTML = '';
+        goalTextEl.textContent = `Goal: ₦${goal.toLocaleString()}`;
+        percentEl.textContent = `${truePercent}%`;
+      }
+
+      // Animate the bar by setting its width — the CSS "transition" makes it slide smoothly
+      document.getElementById('progressFill').style.width = `${visualPercent}%`;
+    } catch (err) {
+      console.error('Failed to load progress:', err);
+    }
+  }
+
+  /*
+    =========================================================
+    RECENT DONORS
+    =========================================================
+    We call /api/donations?id=<campaign id>. That endpoint already
+    resolves each donor's display name server-side — "Anonymous"
+    for anyone who ticked the checkbox, their real name otherwise —
+    and never includes email addresses at all. We just render
+    whatever it gives us.
+  */
+  async function loadRecentDonors(campaignId) {
+    const list = document.getElementById('recentDonorsList');
+    try {
+      const res = await fetch(`/api/donations?id=${encodeURIComponent(campaignId)}`);
+      const data = await res.json();
+      const donations = data.donations || [];
+
+      if (donations.length === 0) {
+        list.innerHTML = '<p class="no-donors-msg">Be the first to donate!</p>';
+        return;
+      }
+
+      list.innerHTML = donations.map((d) => {
+        const when = new Date(d.created_at).toLocaleString();
+        const amount = Number(d.amount) || 0;
+        return `
+          <div class="donor-item">
+            <div>
+              <span class="donor-name">${escapeHtml(d.display_name)}</span>
+              <span class="donor-when">${when}</span>
+            </div>
+            <span class="donor-amount">₦${amount.toLocaleString()}</span>
+          </div>
+        `;
+      }).join('');
+    } catch (err) {
+      console.error('Failed to load recent donors:', err);
+      list.innerHTML = '<p class="no-donors-msg">Could not load recent donors.</p>';
+    }
+  }
+
+  /*
+    =========================================================
+    STEP 2: HANDLE THE "DONATE NOW" BUTTON
+    =========================================================
+    We never touch the Paystack SECRET key on the frontend.
+    Only the PUBLIC key (safe to expose) is used here to open
+    the Paystack Inline popup. The actual confirmation of
+    payment happens later on the backend via a webhook, which
+    is the only trustworthy source of truth for "did this
+    payment really succeed".
+  */
+
+  // The public key is injected into this page at build/deploy time.
+  // On Vercel, we recommend replacing this placeholder using a small
+  // inline script tag generated from the PAYSTACK_PUBLIC_KEY env var
+  // (see README.md for the simplest beginner-friendly way to do this).
+  const PAYSTACK_PUBLIC_KEY = window.PAYSTACK_PUBLIC_KEY || 'pk_test_74617bf8eec51c5488d7fa49ed3e4a6a51519aa3';
+
+  function attachDonateHandler(campaign) {
+    const donateBtn = document.getElementById('donateBtn');
+    const statusMsg = document.getElementById('statusMsg');
+    const donorNameError = document.getElementById('donorNameError');
+
+    donateBtn.addEventListener('click', () => {
+      const donorName = document.getElementById('donorName').value.trim();
+      const email = document.getElementById('donorEmail').value.trim();
+      const amount = Number(document.getElementById('donorAmount').value);
+      const anonymous = document.getElementById('donorAnonymous').checked;
+
+      // Reset any previous validation state
+      donorNameError.style.display = 'none';
+      statusMsg.textContent = '';
+      statusMsg.className = 'status-msg';
+
+      // ---- Donor name is REQUIRED ----
+      if (!donorName) {
+        donorNameError.textContent = 'Please enter your name to continue.';
+        donorNameError.style.display = 'block';
+        document.getElementById('donorName').focus();
+        return;
+      }
+
+      // ---- Email is OPTIONAL — only validate its format if one was typed ----
+      if (email && !email.includes('@')) {
+        statusMsg.textContent = 'That email address doesn\'t look right. You can also leave it blank.';
+        statusMsg.className = 'status-msg error';
+        return;
+      }
+
+      if (!amount || amount < 100) {
+        statusMsg.textContent = 'Minimum donation is ₦100.';
+        statusMsg.className = 'status-msg error';
+        return;
+      }
+
+      donateBtn.disabled = true;
+      donateBtn.textContent = 'Opening secure payment...';
+
+      // Paystack's checkout requires an email string to initialize a
+      // transaction, even though our form makes email optional for the
+      // donor. When none was given, we pass a harmless placeholder to
+      // satisfy Paystack — but we NEVER store this placeholder as the
+      // donor's email. The webhook reads the donor's real (possibly
+      // empty) email back out of metadata.donor_email instead of
+      // trusting Paystack's own customer.email field.
+      const emailForPaystack = email || `donor-${Date.now()}@no-email-provided.example.com`;
+
+      // Open the Paystack Inline popup
+      const handler = PaystackPop.setup({
+        key: PAYSTACK_PUBLIC_KEY,
+        email: emailForPaystack,
+        amount: amount * 100, // Paystack expects the amount in kobo (₦1 = 100 kobo)
+        currency: 'NGN',
+        metadata: {
+          // IMPORTANT: fundraiser_id tells our webhook exactly which
+          // patient's campaign to credit once the payment is confirmed.
+          fundraiser_id: campaign.id,
+          donor_name: donorName,
+          // Empty string (not the placeholder above) if the donor left
+          // email blank — this is what the webhook actually saves.
+          donor_email: email || null,
+          anonymous: anonymous,
+          custom_fields: [
+            { display_name: 'Fundraiser', variable_name: 'fundraiser', value: `Help ${campaign.patient_name}` },
+            { display_name: 'Donor Name', variable_name: 'donor_name', value: donorName },
+          ]
+        },
+        callback: function (response) {
+          // This fires immediately after the popup reports success.
+          // IMPORTANT: this is just the frontend's view of things.
+          // The real, trusted confirmation happens server-side via
+          // the Paystack webhook (api/paystack-webhook.js), which
+          // updates Supabase and therefore the progress bar.
+          statusMsg.textContent = 'Payment received! Updating progress bar...';
+          statusMsg.className = 'status-msg success';
+          donateBtn.disabled = false;
+          donateBtn.textContent = 'Donate Now 💗';
+
+          // Give the webhook a couple of seconds to reach our server
+          // and update Supabase, then refresh the numbers and the
+          // recent-donors list on screen.
+          setTimeout(() => {
+            loadProgress(campaign.id);
+            loadRecentDonors(campaign.id);
+          }, 3000);
+        },
+        onClose: function () {
+          donateBtn.disabled = false;
+          donateBtn.textContent = 'Donate Now 💗';
+          statusMsg.textContent = 'Payment window closed.';
+          statusMsg.className = 'status-msg';
+        }
+      });
+
+      handler.openIframe();
+    });
+  }
+</script>
+
+</body>
+</html>
