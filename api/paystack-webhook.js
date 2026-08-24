@@ -18,12 +18,20 @@
 //      send the same webhook more than once (e.g. if our server is slow
 //      to respond, or due to a network retry) — without this check we'd
 //      add the same donation to the total twice.
-//   5. If the reference is new, we insert a row into "donations" (which
+//   5. We then work out WHICH campaign this donation belongs to. The
+//      donate button on campaign.html passes `fundraiser_id` in the
+//      transaction's metadata when it opens the Paystack popup, and
+//      Paystack echoes that same metadata back to us inside the webhook
+//      event — so we always know exactly which patient to credit, even
+//      with thousands of campaigns running at once.
+//   6. If the reference is new, we insert a row into "donations" (which
 //      has a UNIQUE constraint on paystack_reference as a second line of
-//      defense) and only then update the "fundraiser" row in Supabase:
-//      add to raised_amount, add 1 to donor_count.
-//   6. The next time the frontend calls /api/progress, it will see
-//      the new, updated numbers.
+//      defense) — including the donor's name, their optional email, and
+//      whether they asked to stay anonymous — and only then update that
+//      ONE campaign's row in Supabase: add to raised_amount, add 1 to
+//      donor_count.
+//   7. The next time the frontend calls /api/progress for that campaign,
+//      it will see the new, updated numbers.
 
 import crypto from 'crypto';
 
@@ -95,7 +103,26 @@ export default async function handler(req, res) {
   // Paystack's unique reference for this specific transaction. This is
   // the key we use to detect duplicate/retried webhook deliveries.
   const reference = event.data.reference;
-  const donorEmail = event.data.customer?.email || null;
+
+  // Which campaign this donation is for. campaign.html sets this as
+  // metadata.fundraiser_id when it opens the Paystack popup, and
+  // Paystack sends that same metadata back to us here.
+  const fundraiserId = event.data.metadata?.fundraiser_id || null;
+
+  // Donor name is required on the form, so it always travels in metadata.
+  const donorName = event.data.metadata?.donor_name || null;
+
+  // Email is OPTIONAL for the donor. Paystack's checkout still requires
+  // *some* email string to initialize a transaction, so when the donor
+  // leaves it blank, campaign.html sends Paystack a harmless placeholder
+  // address instead (see campaign.html). That placeholder must never be
+  // saved as if it were the donor's real email — so we read the donor's
+  // actual, possibly-empty input back out of metadata.donor_email rather
+  // than trusting event.data.customer.email.
+  const donorEmail = event.data.metadata?.donor_email || null;
+
+  // "Donate anonymously" checkbox — also travels in metadata.
+  const isAnonymous = event.data.metadata?.anonymous === true || event.data.metadata?.anonymous === 'true';
 
   if (!reference) {
     console.error('Webhook payload is missing event.data.reference.');
@@ -132,20 +159,29 @@ export default async function handler(req, res) {
       return res.status(200).json({ received: true, duplicate: true });
     }
 
-    // ---- STEP 4: Fetch the current fundraiser row from Supabase ----
-    const getRes = await fetch(
-      `${SUPABASE_URL}/rest/v1/fundraiser?select=id,raised_amount,donor_count&limit=1`,
-      {
-        headers: {
-          apikey: SUPABASE_SERVICE_ROLE_KEY,
-          Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-        },
-      }
-    );
+    // ---- STEP 4: Fetch the correct campaign's row from Supabase ----
+    // If the payment told us which campaign it's for (the normal case on
+    // the new multi-campaign site), look up that exact row. Otherwise
+    // fall back to the very first campaign, which is how the original
+    // single-campaign version of this site behaved — this keeps any old
+    // bookmarked page or cached frontend code from breaking.
+    let fundraiserUrl = `${SUPABASE_URL}/rest/v1/fundraiser?select=id,raised_amount,donor_count&limit=1`;
+    if (fundraiserId) {
+      fundraiserUrl = `${SUPABASE_URL}/rest/v1/fundraiser?select=id,raised_amount,donor_count&id=eq.${encodeURIComponent(fundraiserId)}&limit=1`;
+    } else {
+      console.warn(`Webhook for reference ${reference} had no metadata.fundraiser_id — falling back to the first campaign.`);
+    }
+
+    const getRes = await fetch(fundraiserUrl, {
+      headers: {
+        apikey: SUPABASE_SERVICE_ROLE_KEY,
+        Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+      },
+    });
 
     const rows = await getRes.json();
     if (!rows || rows.length === 0) {
-      console.error('No fundraiser row found in Supabase.');
+      console.error('No matching fundraiser row found in Supabase.');
       return res.status(500).json({ error: 'Fundraiser row not found.' });
     }
 
@@ -170,7 +206,9 @@ export default async function handler(req, res) {
       body: JSON.stringify({
         paystack_reference: reference,
         amount: amountPaid,
+        donor_name: donorName,
         donor_email: donorEmail,
+        anonymous: isAnonymous,
         fundraiser_id: current.id,
       }),
     });

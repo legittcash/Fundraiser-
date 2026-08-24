@@ -4,13 +4,20 @@
 // It runs on Vercel's server (never in the visitor's browser), so it's
 // safe to use our Supabase SERVICE ROLE key here.
 //
-// The frontend (index.html) calls this endpoint via:
+// The original single-campaign page called this with no parameters:
 //     fetch('/api/progress')
-// and expects back a JSON object like:
-//     { raised_amount: 500, goal_amount: 1000, donor_count: 3 }
+// and got back the one and only fundraiser row. Now that the site hosts
+// unlimited campaigns, campaign.html calls it with the specific campaign
+// it's showing:
+//     fetch('/api/progress?id=123')       // by numeric id, or
+//     fetch('/api/progress?slug=lucy-x7k2') // by slug
 //
-// That JSON is what fills in the amount raised, percentage, and
-// green progress bar on the page.
+// Calling it with no parameters at all still works exactly like before
+// (returns the first fundraiser row) so any old bookmarked pages or
+// cached frontend code don't break.
+//
+// Either way, the JSON shape stays the same:
+//     { raised_amount: 500, goal_amount: 1000, donor_count: 3 }
 
 // We use plain "fetch" to talk to Supabase's REST API (PostgREST),
 // so we don't need to install any extra npm packages.
@@ -36,11 +43,24 @@ export default async function handler(req, res) {
   // single-slash path no matter how the env var was entered.
   const SUPABASE_BASE_URL = SUPABASE_URL.replace(/\/+$/, '');
 
+  const { id, slug } = req.query;
+
+  // Build the filter for whichever campaign was asked for. If neither
+  // "id" nor "slug" was given, we fall back to the original behavior:
+  // just grab the first row (this only makes sense while there's a
+  // single campaign, but keeps any old integration from breaking).
+  let filter = '';
+  if (id) {
+    filter = `&id=eq.${encodeURIComponent(id)}`;
+  } else if (slug) {
+    filter = `&slug=eq.${encodeURIComponent(slug)}`;
+  }
+
   try {
-    // Ask Supabase's auto-generated REST API for the single row
+    // Ask Supabase's auto-generated REST API for the matching row(s)
     // in the "public.fundraiser" table. We select just the columns we need.
     const response = await fetch(
-      `${SUPABASE_BASE_URL}/rest/v1/fundraiser?select=raised_amount,goal_amount,donor_count&limit=1`,
+      `${SUPABASE_BASE_URL}/rest/v1/fundraiser?select=raised_amount,goal_amount,donor_count${filter}&limit=1`,
       {
         method: 'GET',
         headers: {
