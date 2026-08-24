@@ -1,0 +1,647 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Admin Dashboard</title>
+<style>
+  :root {
+    --pink: #ff2e88;
+    --pink-dark: #e0217a;
+    --green: #22c55e;
+    --bg: #f6f7fb;
+    --card-bg: #ffffff;
+    --text-dark: #1f2937;
+    --text-muted: #6b7280;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background: var(--bg);
+    min-height: 100vh;
+    padding: 20px 12px 60px;
+  }
+  .page-wrap { max-width: 1000px; margin: 0 auto; }
+
+  .top-bar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 24px;
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+  .top-bar h1 { font-size: 1.4rem; color: var(--text-dark); margin: 0; }
+  .logout-btn {
+    background: none;
+    border: 1px solid #e5e7eb;
+    color: var(--text-muted);
+    padding: 8px 14px;
+    border-radius: 999px;
+    font-size: 0.85rem;
+    cursor: pointer;
+  }
+  .logout-btn:hover { background: #f3f4f6; }
+
+  /* Analytics cards */
+  .stats-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 14px;
+    margin-bottom: 30px;
+  }
+  .stat-card {
+    background: var(--card-bg);
+    border-radius: 14px;
+    padding: 16px;
+    box-shadow: 0 4px 14px rgba(0,0,0,0.05);
+  }
+  .stat-value { font-size: 1.4rem; font-weight: 700; color: var(--text-dark); }
+  .stat-label { font-size: 0.8rem; color: var(--text-muted); margin-top: 2px; }
+
+  .section-title {
+    font-size: 1.1rem;
+    color: var(--text-dark);
+    margin: 0 0 14px;
+  }
+
+  /* Campaign management */
+  .toolbar {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 16px;
+    flex-wrap: wrap;
+  }
+  .toolbar input {
+    flex: 1;
+    min-width: 180px;
+    padding: 11px 14px;
+    border: 1px solid #e5e7eb;
+    border-radius: 10px;
+    font-size: 0.95rem;
+  }
+  .btn-primary {
+    background: var(--pink);
+    color: #fff;
+    border: none;
+    padding: 11px 18px;
+    border-radius: 10px;
+    font-weight: 700;
+    font-size: 0.9rem;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .btn-primary:hover { background: var(--pink-dark); }
+
+  .campaign-table-wrap {
+    background: var(--card-bg);
+    border-radius: 14px;
+    box-shadow: 0 4px 14px rgba(0,0,0,0.05);
+    overflow-x: auto;
+    margin-bottom: 40px;
+  }
+  table { width: 100%; border-collapse: collapse; min-width: 640px; }
+  th, td { text-align: left; padding: 12px 14px; font-size: 0.88rem; border-bottom: 1px solid #f0f0f3; }
+  th { color: var(--text-muted); font-weight: 600; font-size: 0.78rem; text-transform: uppercase; }
+  td.name-cell { display: flex; align-items: center; gap: 10px; }
+  td.name-cell img { width: 36px; height: 36px; object-fit: cover; border-radius: 8px; background: #f0f0f3; }
+
+  .badge {
+    display: inline-block;
+    padding: 3px 9px;
+    border-radius: 999px;
+    font-size: 0.75rem;
+    font-weight: 600;
+  }
+  .badge.active { background: #dcfce7; color: #166534; }
+  .badge.archived { background: #fef3c7; color: #92400e; }
+
+  .row-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+  .row-actions button {
+    background: none;
+    border: 1px solid #e5e7eb;
+    padding: 5px 10px;
+    border-radius: 8px;
+    font-size: 0.78rem;
+    cursor: pointer;
+    color: var(--text-dark);
+  }
+  .row-actions button:hover { background: #f3f4f6; }
+  .row-actions button.danger { color: #dc2626; border-color: #fecaca; }
+  .row-actions button.danger:hover { background: #fef2f2; }
+
+  /* Recent donations list */
+  .donation-list { background: var(--card-bg); border-radius: 14px; box-shadow: 0 4px 14px rgba(0,0,0,0.05); padding: 6px 16px; }
+  .donation-item { display: flex; justify-content: space-between; padding: 12px 0; border-bottom: 1px solid #f0f0f3; font-size: 0.88rem; }
+  .donation-item:last-child { border-bottom: none; }
+  .donation-item .who { color: var(--text-dark); }
+  .donation-item .when { color: var(--text-muted); font-size: 0.78rem; }
+  .donation-item .amount { font-weight: 700; color: var(--green); }
+
+  /* Modal form for create/edit */
+  .modal-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.4);
+    align-items: center;
+    justify-content: center;
+    padding: 16px;
+    z-index: 50;
+  }
+  .modal-overlay.open { display: flex; }
+  .modal {
+    background: #fff;
+    border-radius: 16px;
+    max-width: 480px;
+    width: 100%;
+    max-height: 90vh;
+    overflow-y: auto;
+    padding: 24px;
+  }
+  .modal h2 { font-size: 1.15rem; margin: 0 0 16px; color: var(--text-dark); }
+  .modal label { display: block; font-size: 0.85rem; color: var(--text-muted); margin: 12px 0 6px; }
+  .modal input, .modal textarea {
+    width: 100%;
+    padding: 10px 12px;
+    border: 1px solid #e5e7eb;
+    border-radius: 10px;
+    font-size: 0.95rem;
+    font-family: inherit;
+  }
+  .modal textarea { min-height: 90px; resize: vertical; }
+  .modal-actions { display: flex; gap: 10px; margin-top: 20px; }
+  .btn-secondary {
+    flex: 1;
+    background: #f3f4f6;
+    color: var(--text-dark);
+    border: none;
+    padding: 12px;
+    border-radius: 10px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .modal-actions .btn-primary { flex: 1; }
+  .form-error { color: #dc2626; font-size: 0.85rem; margin-top: 10px; }
+  .image-preview { width: 100%; height: 140px; object-fit: cover; border-radius: 10px; margin-top: 10px; background: #f0f0f3; display: none; }
+  .image-preview.visible { display: block; }
+
+  .status-msg { text-align: center; color: var(--text-muted); padding: 30px; }
+  #authGate { display: flex; align-items: center; justify-content: center; min-height: 60vh; }
+</style>
+</head>
+<body>
+
+<!-- Shown briefly while we check whether the visitor is actually logged in -->
+<div id="authGate">
+  <p class="status-msg">Checking session...</p>
+</div>
+
+<!-- The real dashboard content, hidden until we've confirmed a valid admin session -->
+<div class="page-wrap" id="dashboardContent" style="display: none;">
+  <div class="top-bar">
+    <h1>Admin Dashboard</h1>
+    <button class="logout-btn" id="logoutBtn">Log out</button>
+  </div>
+
+  <!-- ============ ANALYTICS ============ -->
+  <h2 class="section-title">Overview</h2>
+  <div class="stats-grid" id="statsGrid">
+    <div class="stat-card"><div class="stat-value">—</div><div class="stat-label">Total patients</div></div>
+    <div class="stat-card"><div class="stat-value">—</div><div class="stat-label">Active campaigns</div></div>
+    <div class="stat-card"><div class="stat-value">—</div><div class="stat-label">Total raised</div></div>
+    <div class="stat-card"><div class="stat-value">—</div><div class="stat-label">Total donors</div></div>
+  </div>
+
+  <!-- ============ CAMPAIGN MANAGEMENT ============ -->
+  <h2 class="section-title">Campaigns</h2>
+  <div class="toolbar">
+    <input type="text" id="searchInput" placeholder="Search patients by name..." />
+    <button class="btn-primary" id="newCampaignBtn">+ New Campaign</button>
+  </div>
+
+  <div class="campaign-table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Patient</th>
+          <th>Goal</th>
+          <th>Raised</th>
+          <th>Donors</th>
+          <th>Status</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody id="campaignTableBody">
+        <tr><td colspan="6" class="status-msg">Loading campaigns...</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- ============ RECENT DONATIONS ============ -->
+  <h2 class="section-title">Recent Donations</h2>
+  <div class="donation-list" id="donationList">
+    <p class="status-msg">Loading...</p>
+  </div>
+</div>
+
+<!-- ============ CREATE / EDIT CAMPAIGN MODAL ============ -->
+<div class="modal-overlay" id="modalOverlay">
+  <div class="modal">
+    <h2 id="modalTitle">New Campaign</h2>
+    <form id="campaignForm">
+      <input type="hidden" id="campaignId" />
+
+      <label for="patientName">Patient name *</label>
+      <input type="text" id="patientName" required />
+
+      <label for="hospital">Hospital</label>
+      <input type="text" id="hospital" />
+
+      <label for="diagnosis">Diagnosis (e.g. "Kidney Failure")</label>
+      <input type="text" id="diagnosis" />
+
+      <label for="story">Story</label>
+      <textarea id="story" placeholder="Explain what the patient needs help with..."></textarea>
+
+      <label for="goalAmount">Goal amount (₦) *</label>
+      <input type="number" id="goalAmount" min="1" required />
+
+      <label for="photoInput">Patient photo</label>
+      <input type="file" id="photoInput" accept="image/jpeg,image/png,image/webp" />
+      <img class="image-preview" id="imagePreview" alt="Preview" />
+
+      <label for="statusSelect">Status</label>
+      <select id="statusSelect" style="width:100%; padding:10px 12px; border:1px solid #e5e7eb; border-radius:10px; font-size:0.95rem;">
+        <option value="active">Active</option>
+        <option value="archived">Archived</option>
+      </select>
+
+      <div class="modal-actions">
+        <button type="button" class="btn-secondary" id="cancelModalBtn">Cancel</button>
+        <button type="submit" class="btn-primary" id="saveCampaignBtn">Save Campaign</button>
+      </div>
+
+      <div class="form-error" id="formError"></div>
+    </form>
+  </div>
+</div>
+
+<script>
+  /*
+    =========================================================
+    STEP 0: CHECK THE ADMIN IS ACTUALLY LOGGED IN
+    =========================================================
+    Anyone can technically open this HTML file's URL, but every
+    piece of real data on it only loads after /api/admin/me
+    confirms a valid session cookie. Without that cookie, every
+    admin API call below will fail with 401, so we redirect to
+    the login page immediately instead of showing a broken page.
+  */
+  async function checkAuth() {
+    try {
+      const res = await fetch('/api/admin/me');
+      if (!res.ok) {
+        window.location.href = 'login.html';
+        return;
+      }
+      document.getElementById('authGate').style.display = 'none';
+      document.getElementById('dashboardContent').style.display = 'block';
+      loadAnalytics();
+      loadCampaigns();
+    } catch (err) {
+      console.error('Auth check failed:', err);
+      window.location.href = 'login.html';
+    }
+  }
+  checkAuth();
+
+  document.getElementById('logoutBtn').addEventListener('click', async () => {
+    await fetch('/api/admin/logout', { method: 'POST' });
+    window.location.href = 'login.html';
+  });
+
+  /*
+    =========================================================
+    ANALYTICS
+    =========================================================
+  */
+  async function loadAnalytics() {
+    try {
+      const res = await fetch('/api/admin/analytics');
+      if (!res.ok) return;
+      const data = await res.json();
+
+      const cards = document.querySelectorAll('#statsGrid .stat-value');
+      cards[0].textContent = data.total_patients;
+      cards[1].textContent = data.active_campaigns;
+      cards[2].textContent = `₦${Number(data.total_raised).toLocaleString()}`;
+      cards[3].textContent = data.total_donors;
+
+      renderDonations(data.recent_donations || []);
+    } catch (err) {
+      console.error('Failed to load analytics:', err);
+    }
+  }
+
+  // The admin dashboard is private, so it's fine (and useful) to show
+  // the donor's real name here even if they chose "Donate anonymously"
+  // on the public page — that checkbox only affects what OTHER VISITORS
+  // see, never what you as the admin can see.
+  function adminDonorLabel(donation) {
+    const name = donation.donor_name || (donation.donor_email ? donation.donor_email : 'Unknown donor');
+    return donation.anonymous ? `${name} (anonymous on public page)` : name;
+  }
+
+  function renderDonations(donations) {
+    const list = document.getElementById('donationList');
+    if (donations.length === 0) {
+      list.innerHTML = '<p class="status-msg">No donations yet.</p>';
+      return;
+    }
+    list.innerHTML = donations.map((d) => {
+      const patientName = d.fundraiser?.patient_name || 'Unknown patient';
+      const when = new Date(d.created_at).toLocaleString();
+      return `
+        <div class="donation-item">
+          <div>
+            <div class="who">${escapeHtml(adminDonorLabel(d))} → ${escapeHtml(patientName)}</div>
+            <div class="when">${when}</div>
+          </div>
+          <div class="amount">₦${Number(d.amount).toLocaleString()}</div>
+        </div>
+      `;
+    }).join('');
+  }
+
+  /*
+    =========================================================
+    CAMPAIGN LIST
+    =========================================================
+  */
+  let searchDebounceTimer = null;
+  const searchInput = document.getElementById('searchInput');
+  const campaignTableBody = document.getElementById('campaignTableBody');
+  let currentCampaignsCache = []; // filled in each time the table loads, used by Edit
+
+  async function loadCampaigns(search = '') {
+    try {
+      const url = search
+        ? `/api/admin/campaigns?search=${encodeURIComponent(search)}`
+        : '/api/admin/campaigns';
+      const res = await fetch(url);
+      if (!res.ok) {
+        campaignTableBody.innerHTML = '<tr><td colspan="6" class="status-msg">Could not load campaigns.</td></tr>';
+        return;
+      }
+      const data = await res.json();
+      currentCampaignsCache = data.campaigns || [];
+      renderCampaignTable(currentCampaignsCache);
+    } catch (err) {
+      console.error('Failed to load campaigns:', err);
+      campaignTableBody.innerHTML = '<tr><td colspan="6" class="status-msg">Could not load campaigns.</td></tr>';
+    }
+  }
+
+  function renderCampaignTable(campaigns) {
+    if (campaigns.length === 0) {
+      campaignTableBody.innerHTML = '<tr><td colspan="6" class="status-msg">No campaigns yet. Create your first one above.</td></tr>';
+      return;
+    }
+
+    campaignTableBody.innerHTML = campaigns.map((c) => `
+      <tr>
+        <td class="name-cell">
+          <img src="${escapeHtml(c.image_url || '../images/lucy.jpg')}" alt="" />
+          <span>${escapeHtml(c.patient_name)}</span>
+        </td>
+        <td>₦${Number(c.goal_amount).toLocaleString()}</td>
+        <td>₦${Number(c.raised_amount).toLocaleString()}</td>
+        <td>${c.donor_count}</td>
+        <td><span class="badge ${c.status}">${c.status}</span></td>
+        <td>
+          <div class="row-actions">
+            <button onclick="openEditModal(${c.id})">Edit</button>
+            <button onclick="toggleArchive(${c.id}, '${c.status}')">${c.status === 'active' ? 'Archive' : 'Reactivate'}</button>
+            <button class="danger" onclick="deleteCampaign(${c.id}, '${escapeJs(c.patient_name)}')">Delete</button>
+          </div>
+        </td>
+      </tr>
+    `).join('');
+  }
+
+  searchInput.addEventListener('input', () => {
+    clearTimeout(searchDebounceTimer);
+    searchDebounceTimer = setTimeout(() => loadCampaigns(searchInput.value.trim()), 300);
+  });
+
+  function escapeHtml(str) {
+    const div = document.createElement('div');
+    div.textContent = str ?? '';
+    return div.innerHTML;
+  }
+  function escapeJs(str) {
+    return String(str ?? '').replace(/'/g, "\\'");
+  }
+
+  /*
+    =========================================================
+    CREATE / EDIT MODAL
+    =========================================================
+  */
+  const modalOverlay = document.getElementById('modalOverlay');
+  const modalTitle = document.getElementById('modalTitle');
+  const campaignForm = document.getElementById('campaignForm');
+  const formError = document.getElementById('formError');
+  const photoInput = document.getElementById('photoInput');
+  const imagePreview = document.getElementById('imagePreview');
+  const saveCampaignBtn = document.getElementById('saveCampaignBtn');
+
+  let uploadedImageUrl = null; // set after a successful image upload
+
+  document.getElementById('newCampaignBtn').addEventListener('click', () => openCreateModal());
+  document.getElementById('cancelModalBtn').addEventListener('click', closeModal);
+
+  function openCreateModal() {
+    modalTitle.textContent = 'New Campaign';
+    campaignForm.reset();
+    document.getElementById('campaignId').value = '';
+    imagePreview.classList.remove('visible');
+    uploadedImageUrl = null;
+    formError.textContent = '';
+    modalOverlay.classList.add('open');
+  }
+
+  function openEditModal(id) {
+    const campaign = currentCampaignsCache.find((c) => c.id === id);
+    if (!campaign) return;
+
+    modalTitle.textContent = `Edit ${campaign.patient_name}`;
+    document.getElementById('campaignId').value = campaign.id;
+    document.getElementById('patientName').value = campaign.patient_name || '';
+    document.getElementById('hospital').value = campaign.hospital || '';
+    document.getElementById('diagnosis').value = campaign.diagnosis || '';
+    document.getElementById('story').value = campaign.story || '';
+    document.getElementById('goalAmount').value = campaign.goal_amount || '';
+    document.getElementById('statusSelect').value = campaign.status || 'active';
+
+    uploadedImageUrl = campaign.image_url || null;
+    if (uploadedImageUrl) {
+      imagePreview.src = uploadedImageUrl;
+      imagePreview.classList.add('visible');
+    } else {
+      imagePreview.classList.remove('visible');
+    }
+
+    formError.textContent = '';
+    modalOverlay.classList.add('open');
+  }
+  // Expose to inline onclick= handlers in the table
+  window.openEditModal = openEditModal;
+
+  function closeModal() {
+    modalOverlay.classList.remove('open');
+  }
+
+  window.toggleArchive = async function (id, currentStatus) {
+    const newStatus = currentStatus === 'active' ? 'archived' : 'active';
+    try {
+      const res = await fetch(`/api/admin/campaigns?id=${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: newStatus }),
+      });
+      if (!res.ok) {
+        alert('Failed to update campaign status.');
+        return;
+      }
+      loadCampaigns(searchInput.value.trim());
+      loadAnalytics();
+    } catch (err) {
+      console.error(err);
+      alert('Something went wrong.');
+    }
+  };
+
+  window.deleteCampaign = async function (id, patientName) {
+    if (!confirm(`Permanently delete ${patientName}'s campaign? This cannot be undone.`)) return;
+    try {
+      const res = await fetch(`/api/admin/campaigns?id=${id}`, { method: 'DELETE' });
+      if (!res.ok) {
+        alert('Failed to delete campaign.');
+        return;
+      }
+      loadCampaigns(searchInput.value.trim());
+      loadAnalytics();
+    } catch (err) {
+      console.error(err);
+      alert('Something went wrong.');
+    }
+  };
+
+  // ---- Image upload: read the chosen file as base64, then send it to
+  // our own /api/admin/upload-image endpoint, which stores it in
+  // Supabase Storage and returns a public URL.
+  photoInput.addEventListener('change', async () => {
+    const file = photoInput.files[0];
+    if (!file) return;
+
+    formError.textContent = '';
+    saveCampaignBtn.disabled = true;
+    saveCampaignBtn.textContent = 'Uploading photo...';
+
+    try {
+      const base64 = await readFileAsBase64(file);
+      const res = await fetch('/api/admin/upload-image', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fileBase64: base64, contentType: file.type }),
+      });
+      const data = await res.json();
+
+      if (!res.ok) {
+        formError.textContent = data.error || 'Image upload failed.';
+        return;
+      }
+
+      uploadedImageUrl = data.url;
+      imagePreview.src = uploadedImageUrl;
+      imagePreview.classList.add('visible');
+    } catch (err) {
+      console.error(err);
+      formError.textContent = 'Image upload failed. Please try again.';
+    } finally {
+      saveCampaignBtn.disabled = false;
+      saveCampaignBtn.textContent = 'Save Campaign';
+    }
+  });
+
+  function readFileAsBase64(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result); // "data:image/jpeg;base64,..."
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+  }
+
+  // ---- Save (create or edit) the campaign
+  campaignForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    formError.textContent = '';
+
+    const id = document.getElementById('campaignId').value;
+    const payload = {
+      patient_name: document.getElementById('patientName').value.trim(),
+      hospital: document.getElementById('hospital').value.trim(),
+      diagnosis: document.getElementById('diagnosis').value.trim(),
+      story: document.getElementById('story').value.trim(),
+      goal_amount: Number(document.getElementById('goalAmount').value),
+      status: document.getElementById('statusSelect').value,
+      image_url: uploadedImageUrl,
+    };
+
+    if (!payload.patient_name) {
+      formError.textContent = 'Patient name is required.';
+      return;
+    }
+    if (!payload.goal_amount || payload.goal_amount <= 0) {
+      formError.textContent = 'Please enter a valid goal amount.';
+      return;
+    }
+
+    saveCampaignBtn.disabled = true;
+    saveCampaignBtn.textContent = 'Saving...';
+
+    try {
+      const url = id ? `/api/admin/campaigns?id=${id}` : '/api/admin/campaigns';
+      const method = id ? 'PATCH' : 'POST';
+
+      const res = await fetch(url, {
+        method,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json();
+
+      if (!res.ok) {
+        formError.textContent = data.error || 'Failed to save campaign.';
+        return;
+      }
+
+      closeModal();
+      loadCampaigns(searchInput.value.trim());
+      loadAnalytics();
+    } catch (err) {
+      console.error(err);
+      formError.textContent = 'Something went wrong. Please try again.';
+    } finally {
+      saveCampaignBtn.disabled = false;
+      saveCampaignBtn.textContent = 'Save Campaign';
+    }
+  });
+</script>
+
+</body>
+</html>
