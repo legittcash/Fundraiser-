@@ -634,6 +634,13 @@
 
       if (!res.ok) {
         formError.textContent = data.error || 'Failed to save campaign.';
+        // "details" carries the raw Supabase/Postgres error text — shown
+        // here so you can diagnose the real cause (e.g. a missing
+        // column from an unrun migration) without digging through
+        // Vercel's function logs.
+        if (data.details) {
+          formError.textContent += ` (${data.details})`;
+        }
         return;
       }
 
