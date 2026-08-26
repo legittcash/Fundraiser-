@@ -512,10 +512,12 @@
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status: newStatus }),
       });
+      const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        alert('Failed to update campaign status.');
+        alert(data.error || 'Failed to update campaign status.');
         return;
       }
+      if (data.warning) alert(data.warning);
       loadCampaigns(searchInput.value.trim());
       loadAnalytics();
     } catch (err) {
@@ -528,10 +530,15 @@
     if (!confirm(`Permanently delete ${patientName}'s campaign? This cannot be undone.`)) return;
     try {
       const res = await fetch(`/api/admin/campaigns?id=${id}`, { method: 'DELETE' });
+      const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        alert('Failed to delete campaign.');
+        alert(data.error || 'Failed to delete campaign.');
         return;
       }
+      // The campaign row is always gone if we get here — but if its
+      // photo couldn't be cleaned up from storage, say so clearly
+      // rather than silently pretending everything was removed.
+      if (data.warning) alert(data.warning);
       loadCampaigns(searchInput.value.trim());
       loadAnalytics();
     } catch (err) {
@@ -633,6 +640,11 @@
       closeModal();
       loadCampaigns(searchInput.value.trim());
       loadAnalytics();
+
+      // If the old photo couldn't be cleaned up from storage after a
+      // successful image replacement, let the admin know — the save
+      // itself still worked, this is just a heads-up for manual cleanup.
+      if (data.warning) alert(data.warning);
     } catch (err) {
       console.error(err);
       formError.textContent = 'Something went wrong. Please try again.';
