@@ -178,9 +178,13 @@ export default async function handler(req, res) {
           }
         }
 
-        return res
-          .status(500)
-          .json({ error: 'Failed to create campaign. Any uploaded photo has been cleaned up automatically.' });
+        return res.status(500).json({
+          error: 'Failed to create campaign. Any uploaded photo has been cleaned up automatically.',
+          // Safe to expose: this endpoint already requires a valid admin
+          // session, and seeing the real database error is what lets you
+          // fix the actual problem instead of guessing.
+          details: lastErrorText,
+        });
       }
 
       return res.status(201).json({ campaign: created[0] });
