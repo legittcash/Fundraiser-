@@ -137,3 +137,27 @@ alter table donations add column if not exists anonymous boolean not null defaul
 -- donor_name is intentionally NOT "not null": the column needs to exist
 -- before we can backfill any old rows, and older donations recorded
 -- before this feature existed simply won't have a name on file.
+
+-- =========================================================================
+-- PRIVATE CAMPAIGN CONTACT PHONE NUMBERS
+-- =========================================================================
+-- 10. Add the patient/authorized-contact phone numbers to "fundraiser".
+-- These are PRIVATE administrative fields for the admin to use when
+-- following up on a campaign — see api/campaign.js and api/campaigns.js,
+-- which deliberately select an explicit list of columns (never "*") so
+-- these two are never returned to the public website or donors.
+--
+-- Both are stored as TEXT, not a numeric type, since phone numbers can
+-- start with a leading zero or a "+" country code and are never used in
+-- arithmetic.
+--
+-- IMPORTANT: phone_number is NOT declared "not null" here, on purpose.
+-- Existing campaigns (including the original "Lucy" row) were created
+-- before this field existed and have no phone number on file — adding a
+-- database-level NOT NULL constraint without backfilling every existing
+-- row first would break them immediately. Instead, the requirement that
+-- NEW campaigns must have a primary phone number is enforced in the
+-- application layer (api/admin/campaigns.js), which is the safe way to
+-- add a "required" field without a destructive migration.
+alter table fundraiser add column if not exists phone_number text;
+alter table fundraiser add column if not exists secondary_phone_number text;
