@@ -100,6 +100,17 @@ export default async function handler(req, res) {
         return res.status(400).json({ error: 'A valid goal amount is required.' });
       }
 
+      // Primary contact phone number is required for every NEW campaign
+      // — this is enforced here in the application layer rather than as
+      // a database NOT NULL constraint, so that existing campaigns
+      // created before this field existed are never broken (see
+      // supabase.sql for why). Secondary phone number stays optional.
+      const phoneNumber = (body.phone_number || '').trim();
+      if (!phoneNumber) {
+        return res.status(400).json({ error: 'A primary contact phone number is required.' });
+      }
+      const secondaryPhoneNumber = (body.secondary_phone_number || '').trim() || null;
+
       // The admin dashboard uploads the photo to Supabase Storage in a
       // SEPARATE request (api/admin/upload-image.js) before ever calling
       // this endpoint — by the time we get here, imageUrl already points
@@ -121,6 +132,8 @@ export default async function handler(req, res) {
           diagnosis: body.diagnosis || null,
           story: body.story || null,
           image_url: imageUrl,
+          phone_number: phoneNumber,
+          secondary_phone_number: secondaryPhoneNumber,
           goal_amount: goalAmount,
           raised_amount: 0, // always starts at zero — never trust a client-supplied value
           donor_count: 0,
@@ -203,7 +216,21 @@ export default async function handler(req, res) {
       // Only allow a specific safe list of fields to be edited.
       // "raised_amount" and "donor_count" are deliberately excluded —
       // they can only change via a real, verified Paystack payment.
-      const editableFields = ['patient_name', 'hospital', 'diagnosis', 'story', 'image_url', 'goal_amount', 'status'];
+      // "phone_number" and "secondary_phone_number" are editable here,
+      // but — unlike on creation — are NOT required to be non-empty:
+      // existing campaigns created before these fields existed may not
+      // have one on file yet, and must remain editable regardless.
+      const editableFields = [
+        'patient_name',
+        'hospital',
+        'diagnosis',
+        'story',
+        'image_url',
+        'goal_amount',
+        'status',
+        'phone_number',
+        'secondary_phone_number',
+      ];
       for (const field of editableFields) {
         if (body[field] !== undefined) updates[field] = body[field];
       }
