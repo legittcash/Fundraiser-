@@ -8,6 +8,12 @@
 // Archived campaigns can still be viewed directly by anyone who has the
 // link (e.g. past donors checking back), they just won't appear in the
 // homepage's active list from /api/campaigns.
+//
+// IMPORTANT — PRIVACY: this only ever selects an explicit list of
+// columns, never "*". "fundraiser" also stores private administrative
+// fields (phone_number, secondary_phone_number) that must never reach
+// the public website — an explicit allowlist here is what guarantees
+// that, even as more private fields get added to the table in future.
 
 export default async function handler(req, res) {
   if (req.method !== 'GET') {
@@ -26,9 +32,15 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: 'A campaign slug is required.' });
   }
 
+  // Everything the public campaign page (campaign.html) needs, and
+  // nothing that's private. phone_number and secondary_phone_number are
+  // deliberately NOT in this list.
+  const PUBLIC_CAMPAIGN_FIELDS =
+    'id,slug,patient_name,hospital,diagnosis,story,image_url,goal_amount,raised_amount,donor_count,status,created_at';
+
   try {
     const response = await fetch(
-      `${SUPABASE_URL}/rest/v1/fundraiser?select=*&slug=eq.${encodeURIComponent(slug)}&limit=1`,
+      `${SUPABASE_URL}/rest/v1/fundraiser?select=${PUBLIC_CAMPAIGN_FIELDS}&slug=eq.${encodeURIComponent(slug)}&limit=1`,
       {
         headers: {
           apikey: SUPABASE_SERVICE_ROLE_KEY,
