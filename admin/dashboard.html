@@ -184,6 +184,7 @@
   }
   .modal-actions .btn-primary { flex: 1; }
   .form-error { color: #dc2626; font-size: 0.85rem; margin-top: 10px; }
+  .field-error { color: #dc2626; font-size: 0.8rem; margin: -6px 0 10px; }
   .image-preview { width: 100%; height: 140px; object-fit: cover; border-radius: 10px; margin-top: 10px; background: #f0f0f3; display: none; }
   .image-preview.visible { display: block; }
 
@@ -261,6 +262,16 @@
 
       <label for="diagnosis">Diagnosis (e.g. "Kidney Failure")</label>
       <input type="text" id="diagnosis" />
+
+      <label for="phoneNumber">Patient/Authorized Contact Phone Number <span id="phoneRequiredMark">*</span></label>
+      <input type="tel" id="phoneNumber" placeholder="e.g. 08012345678 or +2348012345678" />
+      <div class="field-error" id="phoneNumberError" style="display:none;"></div>
+
+      <label for="secondaryPhoneNumber">Secondary Phone Number (Optional)</label>
+      <input type="tel" id="secondaryPhoneNumber" placeholder="e.g. 08012345678 or +2348012345678" />
+      <p style="font-size:0.78rem; color:var(--text-muted); margin:2px 0 0;">
+        🔒 Private — for admin use only. Never shown on the public campaign page.
+      </p>
 
       <label for="story">Story</label>
       <textarea id="story" placeholder="Explain what the patient needs help with..."></textarea>
@@ -470,6 +481,9 @@
     imagePreview.classList.remove('visible');
     uploadedImageUrl = null;
     formError.textContent = '';
+    document.getElementById('phoneNumberError').style.display = 'none';
+    // Primary phone number is required for brand-new campaigns.
+    document.getElementById('phoneRequiredMark').style.display = 'inline';
     modalOverlay.classList.add('open');
   }
 
@@ -485,6 +499,18 @@
     document.getElementById('story').value = campaign.story || '';
     document.getElementById('goalAmount').value = campaign.goal_amount || '';
     document.getElementById('statusSelect').value = campaign.status || 'active';
+
+    // Preserve whatever phone numbers this campaign already has — the
+    // admin can change or clear them, but nothing is force-cleared just
+    // by opening the edit form. Existing campaigns created before this
+    // field existed simply show a blank box here, which is fine.
+    document.getElementById('phoneNumber').value = campaign.phone_number || '';
+    document.getElementById('secondaryPhoneNumber').value = campaign.secondary_phone_number || '';
+    document.getElementById('phoneNumberError').style.display = 'none';
+    // Primary phone number is only REQUIRED for brand-new campaigns —
+    // an existing campaign without one must stay editable, so we don't
+    // show the "required" marker (or enforce it) here.
+    document.getElementById('phoneRequiredMark').style.display = 'none';
 
     uploadedImageUrl = campaign.image_url || null;
     if (uploadedImageUrl) {
@@ -597,6 +623,7 @@
   campaignForm.addEventListener('submit', async (e) => {
     e.preventDefault();
     formError.textContent = '';
+    document.getElementById('phoneNumberError').style.display = 'none';
 
     const id = document.getElementById('campaignId').value;
     const payload = {
@@ -607,6 +634,8 @@
       goal_amount: Number(document.getElementById('goalAmount').value),
       status: document.getElementById('statusSelect').value,
       image_url: uploadedImageUrl,
+      phone_number: document.getElementById('phoneNumber').value.trim(),
+      secondary_phone_number: document.getElementById('secondaryPhoneNumber').value.trim(),
     };
 
     if (!payload.patient_name) {
@@ -615,6 +644,16 @@
     }
     if (!payload.goal_amount || payload.goal_amount <= 0) {
       formError.textContent = 'Please enter a valid goal amount.';
+      return;
+    }
+    // Primary phone number is only required when creating a brand-new
+    // campaign (no id yet). Existing campaigns can be edited and saved
+    // even if this field is still blank on file.
+    if (!id && !payload.phone_number) {
+      const phoneNumberError = document.getElementById('phoneNumberError');
+      phoneNumberError.textContent = 'A primary contact phone number is required for new campaigns.';
+      phoneNumberError.style.display = 'block';
+      document.getElementById('phoneNumber').focus();
       return;
     }
 
