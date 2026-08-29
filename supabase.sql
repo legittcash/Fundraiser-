@@ -14,10 +14,12 @@ create table if not exists fundraiser (
   updated_at timestamptz not null default now()
 );
 
--- 2. Insert the single starting row for Lucy's fundraiser
--- (Only run this once — running it again will create a duplicate row.)
+-- 2. Insert the initial fundraiser row only when the table is empty.
+-- This makes the script safe to run again on an existing database.
+-- If Lucy (or any existing campaign) is already present, nothing is inserted.
 insert into fundraiser (raised_amount, goal_amount, donor_count)
-values (0, 1000, 0);
+select 0, 1000, 0
+where not exists (select 1 from fundraiser);
 
 -- 3. (Recommended) Enable Row Level Security so the table can only be
 -- read/written using the service role key from our serverless
@@ -54,8 +56,10 @@ alter table donations enable row level security;
 -- Everything below turns the single "Lucy" fundraiser into a platform that
 -- can host unlimited patient campaigns, managed from the admin dashboard.
 -- These statements are safe to run even on a database that already has
--- data in it — "add column if not exists" won't touch columns that are
--- already there, and the backfill step only fills in blanks.
+-- data in it. Existing rows are preserved, columns are added only when
+-- missing, and the backfill step only fills in blanks. The initial seed
+-- row above is also conditional, so it cannot recreate Lucy or create a
+-- duplicate fundraiser when this file is run again.
 
 -- 6. Add the new campaign fields to "fundraiser"
 alter table fundraiser add column if not exists patient_name text;
@@ -161,3 +165,37 @@ alter table donations add column if not exists anonymous boolean not null defaul
 -- add a "required" field without a destructive migration.
 alter table fundraiser add column if not exists phone_number text;
 alter table fundraiser add column if not exists secondary_phone_number text;
+
+-- =========================================================================
+-- PAYSTACK TRANSACTION FEES
+-- =========================================================================
+-- 11. Add columns so "donations" records the full breakdown of every
+-- payment: what the donor actually paid, what Paystack kept as its
+-- transaction fee, and what the campaign actually received.
+--
+--   amount        — already existed: the GROSS amount the donor paid.
+--   paystack_fee  — NEW: the fee Paystack deducted, taken directly from
+--                   the "fees" field Paystack sends in the charge.success
+--                   webhook payload (see api/paystack-webhook.js). Never
+--                   a guessed or hard-coded value.
+--   net_amount    — NEW: amount - paystack_fee. This is what the webhook
+--                   now adds to fundraiser.raised_amount, so the
+--                   progress bar reflects money actually received, not
+--                   the donor's gross payment.
+alter table donations add column if not exists paystack_fee numeric not null default 0;
+alter table donations add column if not exists net_amount numeric;
+
+-- Backfill EXISTING donations (recorded before this feature existed).
+-- IMPORTANT: we do NOT know what Paystack actually charged in fees on
+-- those historical transactions — that information was never captured
+-- at the time, and retroactively guessing it would be inventing data.
+-- The safe, honest choice is to treat historical rows as fee = 0 and
+-- net_amount = amount. This also means the backfill causes NO change to
+-- any existing fundraiser.raised_amount total, since those totals were
+-- already computed by summing the gross "amount" of each donation back
+-- when they were recorded — old totals stay exactly as they were.
+-- Only NEW donations recorded after this migration will have a real,
+-- Paystack-reported fee and a true net_amount.
+update donations
+set net_amount = coalesce(net_amount, amount)
+where net_amount is null;

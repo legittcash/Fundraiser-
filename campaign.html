@@ -299,6 +299,13 @@
     margin-top: 2px;
   }
 
+  .donor-item .donor-fee-note {
+    color: var(--text-muted);
+    font-size: 0.76rem;
+    display: block;
+    margin-top: 2px;
+  }
+
   .donor-item .donor-amount {
     color: var(--green);
     font-weight: 700;
@@ -513,7 +520,9 @@
     resolves each donor's display name server-side — "Anonymous"
     for anyone who ticked the checkbox, their real name otherwise —
     and never includes email addresses at all. We just render
-    whatever it gives us.
+    whatever it gives us, including the gross/fee/net breakdown so
+    donors can see how much of their gift actually reaches the
+    campaign after Paystack's processing fee.
   */
   async function loadRecentDonors(campaignId) {
     const list = document.getElementById('recentDonorsList');
@@ -529,14 +538,28 @@
 
       list.innerHTML = donations.map((d) => {
         const when = new Date(d.created_at).toLocaleString();
-        const amount = Number(d.amount) || 0;
+        const gross = Number(d.amount) || 0;
+        const fee = Number(d.paystack_fee) || 0;
+        // Older donations recorded before fee tracking existed have
+        // net_amount equal to the gross amount (fee unknown, treated as
+        // 0) — see supabase.sql for why that's the safe, honest default.
+        const net = d.net_amount != null ? Number(d.net_amount) : gross;
+
+        // Only show a fee line when there actually was one — a lot of
+        // historical or fee-free transactions would otherwise show a
+        // slightly confusing "₦0 fee" note.
+        const feeNote = fee > 0
+          ? `<span class="donor-fee-note">₦${fee.toLocaleString()} payment processing fee · Campaign received ₦${net.toLocaleString()}</span>`
+          : '';
+
         return `
           <div class="donor-item">
             <div>
               <span class="donor-name">${escapeHtml(d.display_name)}</span>
               <span class="donor-when">${when}</span>
+              ${feeNote}
             </div>
-            <span class="donor-amount">₦${amount.toLocaleString()}</span>
+            <span class="donor-amount">₦${gross.toLocaleString()}</span>
           </div>
         `;
       }).join('');
