@@ -94,6 +94,51 @@
   }
   .btn-primary:hover { background: var(--pink-dark); }
 
+  /* Campaign tabs */
+  .tabs {
+    display: flex;
+    gap: 6px;
+    margin-bottom: 16px;
+    flex-wrap: wrap;
+  }
+  .tab-btn {
+    background: var(--card-bg);
+    border: 1px solid #e5e7eb;
+    color: var(--text-muted);
+    padding: 9px 14px;
+    border-radius: 999px;
+    font-size: 0.85rem;
+    font-weight: 600;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .tab-btn:hover { background: #f3f4f6; }
+  .tab-btn.active {
+    background: var(--text-dark);
+    border-color: var(--text-dark);
+    color: #fff;
+  }
+  .tab-count {
+    background: rgba(0,0,0,0.08);
+    color: inherit;
+    border-radius: 999px;
+    font-size: 0.75rem;
+    padding: 1px 7px;
+    font-weight: 700;
+  }
+  .tab-btn.active .tab-count { background: rgba(255,255,255,0.25); }
+
+  .achieved-tag {
+    display: inline-block;
+    margin-left: 4px;
+    font-size: 0.72rem;
+    color: #166534;
+  }
+  .muted-cell { color: var(--text-muted); }
+  .nowrap { white-space: nowrap; }
+
   .campaign-table-wrap {
     background: var(--card-bg);
     border-radius: 14px;
@@ -101,7 +146,7 @@
     overflow-x: auto;
     margin-bottom: 40px;
   }
-  table { width: 100%; border-collapse: collapse; min-width: 640px; }
+  table { width: 100%; border-collapse: collapse; min-width: 920px; }
   th, td { text-align: left; padding: 12px 14px; font-size: 0.88rem; border-bottom: 1px solid #f0f0f3; }
   th { color: var(--text-muted); font-weight: 600; font-size: 0.78rem; text-transform: uppercase; }
   td.name-cell { display: flex; align-items: center; gap: 10px; }
@@ -222,6 +267,16 @@
     <button class="btn-primary" id="newCampaignBtn">+ New Campaign</button>
   </div>
 
+  <!-- Tabs are a client-side view over the same campaign list — no
+       separate data source, so nothing here duplicates the dashboard's
+       existing data or API calls. -->
+  <div class="tabs" id="campaignTabs">
+    <button class="tab-btn active" data-tab="active">Active <span class="tab-count" id="countActive">0</span></button>
+    <button class="tab-btn" data-tab="goal_achieved">Goal Achieved <span class="tab-count" id="countGoalAchieved">0</span></button>
+    <button class="tab-btn" data-tab="archived">Archived <span class="tab-count" id="countArchived">0</span></button>
+    <button class="tab-btn" data-tab="all">All <span class="tab-count" id="countAll">0</span></button>
+  </div>
+
   <div class="campaign-table-wrap">
     <table>
       <thead>
@@ -229,13 +284,17 @@
           <th>Patient</th>
           <th>Goal</th>
           <th>Raised</th>
+          <th>%</th>
           <th>Donors</th>
           <th>Status</th>
+          <th>Primary Phone</th>
+          <th>Secondary Phone</th>
+          <th>Created</th>
           <th>Actions</th>
         </tr>
       </thead>
       <tbody id="campaignTableBody">
-        <tr><td colspan="6" class="status-msg">Loading campaigns...</td></tr>
+        <tr><td colspan="10" class="status-msg">Loading campaigns...</td></tr>
       </tbody>
     </table>
   </div>
@@ -395,6 +454,7 @@
   const searchInput = document.getElementById('searchInput');
   const campaignTableBody = document.getElementById('campaignTableBody');
   let currentCampaignsCache = []; // filled in each time the table loads, used by Edit
+  let currentTab = 'active'; // which of the four tabs is currently shown
 
   async function loadCampaigns(search = '') {
     try {
@@ -403,34 +463,91 @@
         : '/api/admin/campaigns';
       const res = await fetch(url);
       if (!res.ok) {
-        campaignTableBody.innerHTML = '<tr><td colspan="6" class="status-msg">Could not load campaigns.</td></tr>';
+        campaignTableBody.innerHTML = '<tr><td colspan="10" class="status-msg">Could not load campaigns.</td></tr>';
         return;
       }
       const data = await res.json();
       currentCampaignsCache = data.campaigns || [];
-      renderCampaignTable(currentCampaignsCache);
+      updateTabCountsAndRender();
     } catch (err) {
       console.error('Failed to load campaigns:', err);
-      campaignTableBody.innerHTML = '<tr><td colspan="6" class="status-msg">Could not load campaigns.</td></tr>';
+      campaignTableBody.innerHTML = '<tr><td colspan="10" class="status-msg">Could not load campaigns.</td></tr>';
     }
   }
 
+  // A campaign has reached its goal purely based on the actual amounts —
+  // NEVER based on its archived/active status. This is deliberately the
+  // same true-percentage math used on the public campaign page, just
+  // without capping it at 100 here (capping only happens for display).
+  function hasReachedGoal(campaign) {
+    const raised = Number(campaign.raised_amount) || 0;
+    const goal = Number(campaign.goal_amount) || 0;
+    return goal > 0 && raised >= goal;
+  }
+
+  // The four tabs are just different views over the SAME already-loaded
+  // list — no extra API calls, no separate data source.
+  function filterCampaignsByTab(campaigns, tab) {
+    switch (tab) {
+      case 'active':
+        return campaigns.filter((c) => c.status === 'active');
+      case 'goal_achieved':
+        return campaigns.filter(hasReachedGoal);
+      case 'archived':
+        return campaigns.filter((c) => c.status === 'archived');
+      case 'all':
+      default:
+        return campaigns;
+    }
+  }
+
+  function updateTabCountsAndRender() {
+    document.getElementById('countActive').textContent = filterCampaignsByTab(currentCampaignsCache, 'active').length;
+    document.getElementById('countGoalAchieved').textContent = filterCampaignsByTab(currentCampaignsCache, 'goal_achieved').length;
+    document.getElementById('countArchived').textContent = filterCampaignsByTab(currentCampaignsCache, 'archived').length;
+    document.getElementById('countAll').textContent = currentCampaignsCache.length;
+
+    renderCampaignTable(filterCampaignsByTab(currentCampaignsCache, currentTab));
+  }
+
+  document.getElementById('campaignTabs').addEventListener('click', (e) => {
+    const btn = e.target.closest('.tab-btn');
+    if (!btn) return;
+    currentTab = btn.dataset.tab;
+    document.querySelectorAll('#campaignTabs .tab-btn').forEach((b) => b.classList.toggle('active', b === btn));
+    updateTabCountsAndRender();
+  });
+
   function renderCampaignTable(campaigns) {
     if (campaigns.length === 0) {
-      campaignTableBody.innerHTML = '<tr><td colspan="6" class="status-msg">No campaigns yet. Create your first one above.</td></tr>';
+      campaignTableBody.innerHTML = '<tr><td colspan="10" class="status-msg">No campaigns in this tab yet.</td></tr>';
       return;
     }
 
-    campaignTableBody.innerHTML = campaigns.map((c) => `
+    campaignTableBody.innerHTML = campaigns.map((c) => {
+      const raised = Number(c.raised_amount) || 0;
+      const goal = Number(c.goal_amount) || 0;
+      // Same capping rule as the public progress bar: the TRUE amount
+      // raised can exceed the goal (donations keep being accepted after
+      // 100%), but the displayed percentage never shows more than 100%.
+      const percent = goal > 0 ? Math.min(100, Math.round((raised / goal) * 100)) : 0;
+      const achievedTag = hasReachedGoal(c) ? '<span class="achieved-tag">🎉 Achieved</span>' : '';
+      const createdDate = c.created_at ? new Date(c.created_at).toLocaleDateString() : '—';
+
+      return `
       <tr>
         <td class="name-cell">
           <img src="${escapeHtml(c.image_url || '../images/lucy.jpg')}" alt="" />
           <span>${escapeHtml(c.patient_name)}</span>
         </td>
-        <td>₦${Number(c.goal_amount).toLocaleString()}</td>
-        <td>₦${Number(c.raised_amount).toLocaleString()}</td>
+        <td class="nowrap">₦${goal.toLocaleString()}</td>
+        <td class="nowrap">₦${raised.toLocaleString()}</td>
+        <td class="nowrap">${percent}%${achievedTag}</td>
         <td>${c.donor_count}</td>
         <td><span class="badge ${c.status}">${c.status}</span></td>
+        <td class="nowrap">${c.phone_number ? escapeHtml(c.phone_number) : '<span class="muted-cell">—</span>'}</td>
+        <td class="nowrap">${c.secondary_phone_number ? escapeHtml(c.secondary_phone_number) : '<span class="muted-cell">—</span>'}</td>
+        <td class="nowrap muted-cell">${createdDate}</td>
         <td>
           <div class="row-actions">
             <button onclick="openEditModal(${c.id})">Edit</button>
@@ -439,7 +556,8 @@
           </div>
         </td>
       </tr>
-    `).join('');
+    `;
+    }).join('');
   }
 
   searchInput.addEventListener('input', () => {
