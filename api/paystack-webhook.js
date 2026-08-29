@@ -26,12 +26,26 @@
 //      with thousands of campaigns running at once.
 //   6. If the reference is new, we insert a row into "donations" (which
 //      has a UNIQUE constraint on paystack_reference as a second line of
-//      defense) — including the donor's name, their optional email, and
-//      whether they asked to stay anonymous — and only then update that
-//      ONE campaign's row in Supabase: add to raised_amount, add 1 to
-//      donor_count.
+//      defense) — including the donor's name, their optional email,
+//      whether they asked to stay anonymous, AND the payment's gross
+//      amount, Paystack's fee, and the resulting net amount — and only
+//      then update that ONE campaign's row in Supabase: add the NET
+//      amount (never the gross) to raised_amount, add 1 to donor_count.
 //   7. The next time the frontend calls /api/progress for that campaign,
 //      it will see the new, updated numbers.
+//
+// FEE ACCOUNTING:
+// Paystack's charge.success webhook payload includes a documented
+// "fees" field (an integer in kobo, same unit as "amount") — this is
+// Paystack's own reported transaction fee for that specific payment, not
+// a fixed or guessed percentage. We use that field directly:
+//   gross amount = event.data.amount
+//   Paystack fee = event.data.fees
+//   net amount   = gross amount - Paystack fee
+// If a specific webhook payload is ever missing this field (uncommon,
+// but not something to assume never happens across every payment
+// channel), we fall back to treating the fee as 0 for that one payment
+// rather than inventing a number — see the comment at PAYSTACK_FEE below.
 
 import crypto from 'crypto';
 
@@ -98,7 +112,27 @@ export default async function handler(req, res) {
   }
 
   // Amount from Paystack is in kobo, so we convert back to naira
-  const amountPaid = event.data.amount / 100;
+  const amountPaid = event.data.amount / 100; // GROSS amount the donor paid
+
+  // Paystack's own reported transaction fee for THIS specific payment,
+  // taken from the documented "fees" field in the charge.success webhook
+  // payload (also in kobo). This is never a fixed percentage or a
+  // hard-coded number — it's exactly what Paystack tells us it charged.
+  // In the rare case a payload doesn't include it, we fall back to 0
+  // for that one payment rather than fabricate a figure; this means
+  // net_amount would equal the gross amount for that donation only.
+  const feesRaw = event.data.fees;
+  const paystackFee = typeof feesRaw === 'number' ? feesRaw / 100 : 0;
+  if (typeof feesRaw !== 'number') {
+    console.warn(
+      `charge.success payload for reference ${event.data.reference} had no numeric "fees" field — ` +
+        `treating the Paystack fee as 0 for this donation.`
+    );
+  }
+
+  // What the campaign actually receives after Paystack's cut. This is
+  // the figure that updates raised_amount — never the gross amount.
+  const netAmount = amountPaid - paystackFee;
 
   // Paystack's unique reference for this specific transaction. This is
   // the key we use to detect duplicate/retried webhook deliveries.
@@ -186,7 +220,10 @@ export default async function handler(req, res) {
     }
 
     const current = rows[0];
-    const newRaisedAmount = Number(current.raised_amount) + amountPaid;
+    // IMPORTANT: the campaign's raised_amount increases by the NET
+    // amount (after Paystack's fee), never the gross amount the donor
+    // paid — that's the whole point of this accounting change.
+    const newRaisedAmount = Number(current.raised_amount) + netAmount;
     const newDonorCount = Number(current.donor_count) + 1;
 
     // ---- STEP 5: Insert this donation into "donations" ----
@@ -205,7 +242,9 @@ export default async function handler(req, res) {
       },
       body: JSON.stringify({
         paystack_reference: reference,
-        amount: amountPaid,
+        amount: amountPaid, // gross amount the donor paid
+        paystack_fee: paystackFee,
+        net_amount: netAmount,
         donor_name: donorName,
         donor_email: donorEmail,
         anonymous: isAnonymous,
