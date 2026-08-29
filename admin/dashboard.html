@@ -256,8 +256,10 @@
   <div class="stats-grid" id="statsGrid">
     <div class="stat-card"><div class="stat-value">—</div><div class="stat-label">Total patients</div></div>
     <div class="stat-card"><div class="stat-value">—</div><div class="stat-label">Active campaigns</div></div>
-    <div class="stat-card"><div class="stat-value">—</div><div class="stat-label">Total raised</div></div>
+    <div class="stat-card"><div class="stat-value">—</div><div class="stat-label">Total raised (net)</div></div>
     <div class="stat-card"><div class="stat-value">—</div><div class="stat-label">Total donors</div></div>
+    <div class="stat-card"><div class="stat-value">—</div><div class="stat-label">Total gross donations</div></div>
+    <div class="stat-card"><div class="stat-value">—</div><div class="stat-label">Total Paystack fees</div></div>
   </div>
 
   <!-- ============ CAMPAIGN MANAGEMENT ============ -->
@@ -408,6 +410,8 @@
       cards[1].textContent = data.active_campaigns;
       cards[2].textContent = `₦${Number(data.total_raised).toLocaleString()}`;
       cards[3].textContent = data.total_donors;
+      cards[4].textContent = `₦${Number(data.total_gross_donations || 0).toLocaleString()}`;
+      cards[5].textContent = `₦${Number(data.total_paystack_fees || 0).toLocaleString()}`;
 
       renderDonations(data.recent_donations || []);
     } catch (err) {
@@ -433,13 +437,19 @@
     list.innerHTML = donations.map((d) => {
       const patientName = d.fundraiser?.patient_name || 'Unknown patient';
       const when = new Date(d.created_at).toLocaleString();
+      const gross = Number(d.amount) || 0;
+      const fee = Number(d.paystack_fee) || 0;
+      // Older donations recorded before fee tracking existed have
+      // net_amount equal to the gross amount — see supabase.sql.
+      const net = d.net_amount != null ? Number(d.net_amount) : gross;
       return `
         <div class="donation-item">
           <div>
             <div class="who">${escapeHtml(adminDonorLabel(d))} → ${escapeHtml(patientName)}</div>
             <div class="when">${when}</div>
+            <div class="when">Gross ₦${gross.toLocaleString()} · Fee ₦${fee.toLocaleString()} · Net ₦${net.toLocaleString()}</div>
           </div>
-          <div class="amount">₦${Number(d.amount).toLocaleString()}</div>
+          <div class="amount">₦${net.toLocaleString()}</div>
         </div>
       `;
     }).join('');
