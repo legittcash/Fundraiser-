@@ -146,7 +146,7 @@
     overflow-x: auto;
     margin-bottom: 40px;
   }
-  table { width: 100%; border-collapse: collapse; min-width: 920px; }
+  table { width: 100%; border-collapse: collapse; min-width: 1080px; }
   th, td { text-align: left; padding: 12px 14px; font-size: 0.88rem; border-bottom: 1px solid #f0f0f3; }
   th { color: var(--text-muted); font-weight: 600; font-size: 0.78rem; text-transform: uppercase; }
   td.name-cell { display: flex; align-items: center; gap: 10px; }
@@ -260,6 +260,23 @@
     <div class="stat-card"><div class="stat-value">—</div><div class="stat-label">Total donors</div></div>
     <div class="stat-card"><div class="stat-value">—</div><div class="stat-label">Total gross donations</div></div>
     <div class="stat-card"><div class="stat-value">—</div><div class="stat-label">Total Paystack fees</div></div>
+    <div class="stat-card"><div class="stat-value">—</div><div class="stat-label">Total platform fees</div></div>
+  </div>
+
+  <!-- ============ PLATFORM FEE MASTER SWITCH ============ -->
+  <h2 class="section-title">Platform Fee</h2>
+  <div class="stat-card" style="margin-bottom:30px; max-width:420px;">
+    <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:8px;">
+      <div>
+        <div style="font-weight:700; color:var(--text-dark);">Platform Fee</div>
+        <div style="font-size:0.8rem; color:var(--text-muted);" id="platformFeeStatusLabel">Loading...</div>
+      </div>
+      <button class="btn-secondary" id="platformFeeToggleBtn" style="flex:none; padding:10px 16px;">…</button>
+    </div>
+    <div style="font-size:0.78rem; color:var(--text-muted);">
+      Rate: 1% of each donation · Maximum: ₦1,000 per transaction · Applies only to newly started donations —
+      never recalculated on past donations.
+    </div>
   </div>
 
   <!-- ============ CAMPAIGN MANAGEMENT ============ -->
@@ -285,10 +302,11 @@
         <tr>
           <th>Patient</th>
           <th>Goal</th>
-          <th>Raised</th>
+          <th>Raised (net)</th>
           <th>%</th>
           <th>Donors</th>
           <th>Status</th>
+          <th>Beneficiary</th>
           <th>Primary Phone</th>
           <th>Secondary Phone</th>
           <th>Created</th>
@@ -296,7 +314,7 @@
         </tr>
       </thead>
       <tbody id="campaignTableBody">
-        <tr><td colspan="10" class="status-msg">Loading campaigns...</td></tr>
+        <tr><td colspan="11" class="status-msg">Loading campaigns...</td></tr>
       </tbody>
     </table>
   </div>
@@ -360,6 +378,54 @@
   </div>
 </div>
 
+<!-- ============ BENEFICIARY / SETTLEMENT MODAL ============ -->
+<div class="modal-overlay" id="beneficiaryModalOverlay">
+  <div class="modal">
+    <h2 id="beneficiaryModalTitle">Beneficiary</h2>
+    <p style="font-size:0.82rem; color:var(--text-muted); margin:-8px 0 14px;">
+      🔒 Bank details and phone numbers here are private and never shown on the public campaign page.
+    </p>
+
+    <div id="beneficiaryStatusPanel" style="margin-bottom:16px;"></div>
+
+    <form id="beneficiaryForm">
+      <input type="hidden" id="beneficiaryFundraiserId" />
+
+      <label for="beneficiaryName">Beneficiary name *</label>
+      <input type="text" id="beneficiaryName" required />
+
+      <label for="beneficiaryBank">Bank *</label>
+      <select id="beneficiaryBank" style="width:100%; padding:10px 12px; border:1px solid #e5e7eb; border-radius:10px; font-size:0.95rem;">
+        <option value="">Loading banks...</option>
+      </select>
+
+      <label for="beneficiaryAccountNumber">Account number *</label>
+      <input type="text" id="beneficiaryAccountNumber" inputmode="numeric" placeholder="e.g. 0123456789" />
+
+      <label for="beneficiaryPercentage">Platform fee % (0 = beneficiary gets full net amount)</label>
+      <input type="number" id="beneficiaryPercentage" min="0" max="100" step="0.1" value="0" />
+
+      <label for="beneficiaryPhone">Beneficiary primary phone</label>
+      <input type="tel" id="beneficiaryPhone" placeholder="e.g. 08012345678 or +2348012345678" />
+
+      <label for="beneficiarySecondaryPhone">Beneficiary secondary phone (optional)</label>
+      <input type="tel" id="beneficiarySecondaryPhone" placeholder="e.g. 08012345678 or +2348012345678" />
+
+      <div class="modal-actions">
+        <button type="button" class="btn-secondary" id="cancelBeneficiaryModalBtn">Close</button>
+        <button type="submit" class="btn-primary" id="saveBeneficiaryBtn">Save Details</button>
+      </div>
+
+      <div class="form-error" id="beneficiaryFormError"></div>
+    </form>
+
+    <div class="modal-actions" style="margin-top:10px;">
+      <button type="button" class="btn-secondary" id="verifyBeneficiaryBtn">Verify with Paystack</button>
+      <button type="button" class="btn-primary" id="toggleSettlementBtn">Enable Settlement</button>
+    </div>
+  </div>
+</div>
+
 <script>
   /*
     =========================================================
@@ -382,6 +448,8 @@
       document.getElementById('dashboardContent').style.display = 'block';
       loadAnalytics();
       loadCampaigns();
+      loadBankList();
+      loadPlatformFeeStatus();
     } catch (err) {
       console.error('Auth check failed:', err);
       window.location.href = 'login.html';
@@ -412,6 +480,7 @@
       cards[3].textContent = data.total_donors;
       cards[4].textContent = `₦${Number(data.total_gross_donations || 0).toLocaleString()}`;
       cards[5].textContent = `₦${Number(data.total_paystack_fees || 0).toLocaleString()}`;
+      cards[6].textContent = `₦${Number(data.total_platform_fees || 0).toLocaleString()}`;
 
       renderDonations(data.recent_donations || []);
     } catch (err) {
@@ -439,21 +508,97 @@
       const when = new Date(d.created_at).toLocaleString();
       const gross = Number(d.amount) || 0;
       const fee = Number(d.paystack_fee) || 0;
+      const platformFee = Number(d.platform_fee) || 0;
       // Older donations recorded before fee tracking existed have
       // net_amount equal to the gross amount — see supabase.sql.
       const net = d.net_amount != null ? Number(d.net_amount) : gross;
+      const platformFeeNote = platformFee > 0 ? ` · Platform fee ₦${platformFee.toLocaleString()}` : '';
       return `
         <div class="donation-item">
           <div>
             <div class="who">${escapeHtml(adminDonorLabel(d))} → ${escapeHtml(patientName)}</div>
             <div class="when">${when}</div>
-            <div class="when">Gross ₦${gross.toLocaleString()} · Fee ₦${fee.toLocaleString()} · Net ₦${net.toLocaleString()}</div>
+            <div class="when">Gross ₦${gross.toLocaleString()} · Paystack fee ₦${fee.toLocaleString()}${platformFeeNote} · Net ₦${net.toLocaleString()}</div>
           </div>
           <div class="amount">₦${net.toLocaleString()}</div>
         </div>
       `;
     }).join('');
   }
+
+  /*
+    =========================================================
+    PLATFORM FEE MASTER SWITCH
+    =========================================================
+    This is stored in Supabase's "platform_settings" table, not browser
+    localStorage — it persists across logout, redeploys, and different
+    devices, and only an authenticated admin can change it.
+    The 1% rate and ₦1,000 cap are fixed and shown for information only;
+    the only thing this control actually changes is ON/OFF.
+  */
+  let currentPlatformFeeEnabled = false;
+
+  async function loadPlatformFeeStatus() {
+    const label = document.getElementById('platformFeeStatusLabel');
+    const btn = document.getElementById('platformFeeToggleBtn');
+    try {
+      const res = await fetch('/api/admin/platform-fee');
+      if (!res.ok) {
+        label.textContent = 'Could not load platform fee status.';
+        return;
+      }
+      const data = await res.json();
+      currentPlatformFeeEnabled = data.enabled === true;
+      renderPlatformFeeControl();
+    } catch (err) {
+      console.error('Failed to load platform fee status:', err);
+      label.textContent = 'Could not load platform fee status.';
+    }
+  }
+
+  function renderPlatformFeeControl() {
+    const label = document.getElementById('platformFeeStatusLabel');
+    const btn = document.getElementById('platformFeeToggleBtn');
+    if (currentPlatformFeeEnabled) {
+      label.innerHTML = '<span class="badge active">ON</span> — 1% per donation, capped at ₦1,000';
+      btn.textContent = 'Turn OFF';
+    } else {
+      label.innerHTML = '<span class="badge archived">OFF</span> — no platform fee is charged';
+      btn.textContent = 'Turn ON';
+    }
+  }
+
+  document.getElementById('platformFeeToggleBtn').addEventListener('click', async () => {
+    const turningOn = !currentPlatformFeeEnabled;
+    const confirmed = confirm(
+      turningOn
+        ? 'Turn ON the platform fee? New donations from now on will have 1% (up to ₦1,000) deducted as a platform fee. Past donations are never affected.'
+        : 'Turn OFF the platform fee? New donations from now on will no longer have any platform fee deducted.'
+    );
+    if (!confirmed) return;
+
+    const btn = document.getElementById('platformFeeToggleBtn');
+    btn.disabled = true;
+    try {
+      const res = await fetch('/api/admin/platform-fee', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled: turningOn }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        alert(data.error || 'Failed to update platform fee setting.');
+        return;
+      }
+      currentPlatformFeeEnabled = data.enabled === true;
+      renderPlatformFeeControl();
+    } catch (err) {
+      console.error(err);
+      alert('Something went wrong updating the platform fee setting.');
+    } finally {
+      btn.disabled = false;
+    }
+  });
 
   /*
     =========================================================
@@ -465,6 +610,21 @@
   const campaignTableBody = document.getElementById('campaignTableBody');
   let currentCampaignsCache = []; // filled in each time the table loads, used by Edit
   let currentTab = 'active'; // which of the four tabs is currently shown
+  let beneficiarySummaries = {}; // fundraiser_id -> masked beneficiary summary, for the table's Beneficiary column
+
+  async function loadBeneficiarySummaries() {
+    try {
+      const res = await fetch('/api/admin/beneficiaries?all=1');
+      if (!res.ok) return;
+      const data = await res.json();
+      beneficiarySummaries = {};
+      (data.beneficiaries || []).forEach((b) => {
+        beneficiarySummaries[b.fundraiser_id] = b;
+      });
+    } catch (err) {
+      console.error('Failed to load beneficiary summaries:', err);
+    }
+  }
 
   async function loadCampaigns(search = '') {
     try {
@@ -473,15 +633,16 @@
         : '/api/admin/campaigns';
       const res = await fetch(url);
       if (!res.ok) {
-        campaignTableBody.innerHTML = '<tr><td colspan="10" class="status-msg">Could not load campaigns.</td></tr>';
+        campaignTableBody.innerHTML = '<tr><td colspan="11" class="status-msg">Could not load campaigns.</td></tr>';
         return;
       }
       const data = await res.json();
       currentCampaignsCache = data.campaigns || [];
+      await loadBeneficiarySummaries();
       updateTabCountsAndRender();
     } catch (err) {
       console.error('Failed to load campaigns:', err);
-      campaignTableBody.innerHTML = '<tr><td colspan="10" class="status-msg">Could not load campaigns.</td></tr>';
+      campaignTableBody.innerHTML = '<tr><td colspan="11" class="status-msg">Could not load campaigns.</td></tr>';
     }
   }
 
@@ -530,7 +691,7 @@
 
   function renderCampaignTable(campaigns) {
     if (campaigns.length === 0) {
-      campaignTableBody.innerHTML = '<tr><td colspan="10" class="status-msg">No campaigns in this tab yet.</td></tr>';
+      campaignTableBody.innerHTML = '<tr><td colspan="11" class="status-msg">No campaigns in this tab yet.</td></tr>';
       return;
     }
 
@@ -543,6 +704,7 @@
       const percent = goal > 0 ? Math.min(100, Math.round((raised / goal) * 100)) : 0;
       const achievedTag = hasReachedGoal(c) ? '<span class="achieved-tag">🎉 Achieved</span>' : '';
       const createdDate = c.created_at ? new Date(c.created_at).toLocaleDateString() : '—';
+      const beneficiaryCell = beneficiaryStatusCellHtml(beneficiarySummaries[c.id]);
 
       return `
       <tr>
@@ -555,12 +717,14 @@
         <td class="nowrap">${percent}%${achievedTag}</td>
         <td>${c.donor_count}</td>
         <td><span class="badge ${c.status}">${c.status}</span></td>
+        <td class="nowrap">${beneficiaryCell}</td>
         <td class="nowrap">${c.phone_number ? escapeHtml(c.phone_number) : '<span class="muted-cell">—</span>'}</td>
         <td class="nowrap">${c.secondary_phone_number ? escapeHtml(c.secondary_phone_number) : '<span class="muted-cell">—</span>'}</td>
         <td class="nowrap muted-cell">${createdDate}</td>
         <td>
           <div class="row-actions">
             <button onclick="openEditModal(${c.id})">Edit</button>
+            <button onclick="openBeneficiaryModal(${c.id}, '${escapeJs(c.patient_name)}')">Beneficiary</button>
             <button onclick="toggleArchive(${c.id}, '${c.status}')">${c.status === 'active' ? 'Archive' : 'Reactivate'}</button>
             <button class="danger" onclick="deleteCampaign(${c.id}, '${escapeJs(c.patient_name)}')">Delete</button>
           </div>
@@ -568,6 +732,25 @@
       </tr>
     `;
     }).join('');
+  }
+
+  // A compact, honest summary for the table's "Beneficiary" column —
+  // full detail (and the edit form) only appears once the admin opens
+  // the Beneficiary modal for that specific campaign.
+  function beneficiaryStatusCellHtml(summary) {
+    if (!summary) {
+      return '<span class="muted-cell">Not set up</span>';
+    }
+    if (summary.settlement_enabled) {
+      return '<span class="badge active">Settlement Enabled</span>';
+    }
+    if (summary.verification_status === 'verified') {
+      return '<span class="badge archived">Verified · Paused</span>';
+    }
+    if (summary.verification_status === 'failed') {
+      return '<span class="badge archived">Verification Failed</span>';
+    }
+    return '<span class="muted-cell">Pending verification</span>';
   }
 
   searchInput.addEventListener('input', () => {
@@ -825,6 +1008,226 @@
     } finally {
       saveCampaignBtn.disabled = false;
       saveCampaignBtn.textContent = 'Save Campaign';
+    }
+  });
+
+  /*
+    =========================================================
+    BENEFICIARY / SETTLEMENT MANAGEMENT
+    =========================================================
+    Everything below is entirely additive: it manages the separate
+    "beneficiaries" table via its own dedicated endpoints and never
+    touches campaign creation/editing/deletion, images, or donations.
+  */
+  const beneficiaryModalOverlay = document.getElementById('beneficiaryModalOverlay');
+  const beneficiaryForm = document.getElementById('beneficiaryForm');
+  const beneficiaryFormError = document.getElementById('beneficiaryFormError');
+  const beneficiaryStatusPanel = document.getElementById('beneficiaryStatusPanel');
+  const verifyBeneficiaryBtn = document.getElementById('verifyBeneficiaryBtn');
+  const toggleSettlementBtn = document.getElementById('toggleSettlementBtn');
+  let currentBeneficiary = null; // the beneficiary currently loaded in the modal, if any
+  let bankListCache = [];
+
+  async function loadBankList() {
+    const select = document.getElementById('beneficiaryBank');
+    try {
+      const res = await fetch('/api/admin/banks');
+      const data = await res.json();
+      if (!res.ok) {
+        select.innerHTML = '<option value="">Could not load banks</option>';
+        return;
+      }
+      bankListCache = data.banks || [];
+      select.innerHTML =
+        '<option value="">Select a bank...</option>' +
+        bankListCache.map((b) => `<option value="${escapeHtml(b.code)}">${escapeHtml(b.name)}</option>`).join('');
+    } catch (err) {
+      console.error('Failed to load bank list:', err);
+      select.innerHTML = '<option value="">Could not load banks</option>';
+    }
+  }
+
+  window.openBeneficiaryModal = async function (fundraiserId, patientName) {
+    document.getElementById('beneficiaryModalTitle').textContent = `Beneficiary — ${patientName}`;
+    document.getElementById('beneficiaryFundraiserId').value = fundraiserId;
+    beneficiaryFormError.textContent = '';
+    beneficiaryStatusPanel.innerHTML = '<p class="status-msg">Loading...</p>';
+    beneficiaryModalOverlay.classList.add('open');
+
+    try {
+      const res = await fetch(`/api/admin/beneficiaries?fundraiser_id=${fundraiserId}`);
+      const data = await res.json();
+      currentBeneficiary = data.beneficiary || null;
+      populateBeneficiaryForm(currentBeneficiary);
+      renderBeneficiaryStatusPanel(currentBeneficiary);
+    } catch (err) {
+      console.error('Failed to load beneficiary:', err);
+      beneficiaryStatusPanel.innerHTML = '<p class="status-msg">Could not load beneficiary details.</p>';
+    }
+  };
+
+  document.getElementById('cancelBeneficiaryModalBtn').addEventListener('click', () => {
+    beneficiaryModalOverlay.classList.remove('open');
+  });
+
+  function populateBeneficiaryForm(beneficiary) {
+    document.getElementById('beneficiaryName').value = beneficiary?.beneficiary_name || '';
+    document.getElementById('beneficiaryBank').value = beneficiary?.bank_code || '';
+    document.getElementById('beneficiaryAccountNumber').value = beneficiary?.account_number || '';
+    document.getElementById('beneficiaryPercentage').value = beneficiary?.settlement_percentage ?? 0;
+    document.getElementById('beneficiaryPhone').value = beneficiary?.primary_phone_number || '';
+    document.getElementById('beneficiarySecondaryPhone').value = beneficiary?.secondary_phone_number || '';
+  }
+
+  // Renders the four-state summary requested: Pending verification /
+  // Verified / Settlement Enabled / Settlement Paused — plus a masked
+  // account number and the resolved account name once verified.
+  function renderBeneficiaryStatusPanel(beneficiary) {
+    if (!beneficiary) {
+      beneficiaryStatusPanel.innerHTML = '<p class="status-msg">No beneficiary on file yet — add one below.</p>';
+      verifyBeneficiaryBtn.style.display = 'none';
+      toggleSettlementBtn.style.display = 'none';
+      return;
+    }
+
+    verifyBeneficiaryBtn.style.display = 'inline-block';
+    toggleSettlementBtn.style.display = 'inline-block';
+
+    const masked = beneficiary.account_number ? `••••${String(beneficiary.account_number).slice(-4)}` : '—';
+    let statusBadge;
+    if (beneficiary.settlement_enabled) {
+      statusBadge = '<span class="badge active">Settlement Enabled</span>';
+      toggleSettlementBtn.textContent = 'Pause Settlement';
+    } else if (beneficiary.verification_status === 'verified') {
+      statusBadge = '<span class="badge archived">Verified · Settlement Paused</span>';
+      toggleSettlementBtn.textContent = 'Enable Settlement';
+    } else if (beneficiary.verification_status === 'failed') {
+      statusBadge = '<span class="badge archived">Verification Failed</span>';
+      toggleSettlementBtn.textContent = 'Enable Settlement';
+    } else {
+      statusBadge = '<span class="badge archived">Pending Verification</span>';
+      toggleSettlementBtn.textContent = 'Enable Settlement';
+    }
+
+    beneficiaryStatusPanel.innerHTML = `
+      <div style="background:#f9fafb; border-radius:10px; padding:12px 14px; font-size:0.85rem;">
+        <div style="margin-bottom:6px;">${statusBadge}</div>
+        <div>Bank account: <strong>${masked}</strong></div>
+        ${beneficiary.account_name ? `<div>Verified name: <strong>${escapeHtml(beneficiary.account_name)}</strong></div>` : ''}
+        ${beneficiary.paystack_subaccount_code ? `<div>Subaccount: <span class="muted-cell">${escapeHtml(beneficiary.paystack_subaccount_code)}</span></div>` : ''}
+      </div>
+    `;
+  }
+
+  beneficiaryForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    beneficiaryFormError.textContent = '';
+
+    const fundraiserId = document.getElementById('beneficiaryFundraiserId').value;
+    const payload = {
+      fundraiser_id: Number(fundraiserId),
+      beneficiary_name: document.getElementById('beneficiaryName').value.trim(),
+      bank_code: document.getElementById('beneficiaryBank').value,
+      bank_name: (bankListCache.find((b) => b.code === document.getElementById('beneficiaryBank').value) || {}).name || null,
+      account_number: document.getElementById('beneficiaryAccountNumber').value.trim(),
+      settlement_percentage: Number(document.getElementById('beneficiaryPercentage').value) || 0,
+      primary_phone_number: document.getElementById('beneficiaryPhone').value.trim(),
+      secondary_phone_number: document.getElementById('beneficiarySecondaryPhone').value.trim(),
+    };
+
+    if (!payload.beneficiary_name || !payload.bank_code || !payload.account_number) {
+      beneficiaryFormError.textContent = 'Beneficiary name, bank, and account number are all required.';
+      return;
+    }
+
+    const saveBtn = document.getElementById('saveBeneficiaryBtn');
+    saveBtn.disabled = true;
+    saveBtn.textContent = 'Saving...';
+
+    try {
+      const res = await fetch('/api/admin/beneficiaries', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        beneficiaryFormError.textContent = data.error || 'Failed to save beneficiary.';
+        return;
+      }
+
+      currentBeneficiary = data.beneficiary;
+      renderBeneficiaryStatusPanel(currentBeneficiary);
+      if (data.reverified_required) {
+        beneficiaryFormError.textContent = '';
+        alert('Bank details saved. This beneficiary now needs to be verified again before settlement can be enabled.');
+      }
+      loadBeneficiarySummaries().then(() => updateTabCountsAndRender());
+    } catch (err) {
+      console.error(err);
+      beneficiaryFormError.textContent = 'Something went wrong. Please try again.';
+    } finally {
+      saveBtn.disabled = false;
+      saveBtn.textContent = 'Save Details';
+    }
+  });
+
+  verifyBeneficiaryBtn.addEventListener('click', async () => {
+    const fundraiserId = document.getElementById('beneficiaryFundraiserId').value;
+    verifyBeneficiaryBtn.disabled = true;
+    verifyBeneficiaryBtn.textContent = 'Verifying...';
+    beneficiaryFormError.textContent = '';
+
+    try {
+      const res = await fetch('/api/admin/verify-beneficiary', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fundraiser_id: Number(fundraiserId) }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        beneficiaryFormError.textContent = data.error || 'Verification failed.';
+        return;
+      }
+      currentBeneficiary = data.beneficiary;
+      renderBeneficiaryStatusPanel(currentBeneficiary);
+      loadBeneficiarySummaries().then(() => updateTabCountsAndRender());
+    } catch (err) {
+      console.error(err);
+      beneficiaryFormError.textContent = 'Something went wrong verifying this beneficiary.';
+    } finally {
+      verifyBeneficiaryBtn.disabled = false;
+      verifyBeneficiaryBtn.textContent = 'Verify with Paystack';
+    }
+  });
+
+  toggleSettlementBtn.addEventListener('click', async () => {
+    if (!currentBeneficiary) return;
+    const action = currentBeneficiary.settlement_enabled ? 'pause' : 'enable';
+    const fundraiserId = document.getElementById('beneficiaryFundraiserId').value;
+
+    toggleSettlementBtn.disabled = true;
+    beneficiaryFormError.textContent = '';
+
+    try {
+      const res = await fetch('/api/admin/settlement', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fundraiser_id: Number(fundraiserId), action }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        beneficiaryFormError.textContent = data.error || 'Could not update settlement status.';
+        return;
+      }
+      currentBeneficiary = data.beneficiary;
+      renderBeneficiaryStatusPanel(currentBeneficiary);
+      loadBeneficiarySummaries().then(() => updateTabCountsAndRender());
+    } catch (err) {
+      console.error(err);
+      beneficiaryFormError.textContent = 'Something went wrong updating settlement status.';
+    } finally {
+      toggleSettlementBtn.disabled = false;
     }
   });
 </script>
