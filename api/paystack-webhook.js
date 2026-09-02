@@ -7,8 +7,13 @@
 // be tampered with.
 //
 // Flow:
-//   1. A donor pays through the Paystack popup on index.html.
-//   2. Paystack's servers send a POST request to this URL:
+//   1. A donor starts a donation on campaign.html, which calls
+//      /api/initialize-donation (our OWN server). That endpoint — never
+//      the browser — decides the final settlement subaccount and
+//      platform fee, then asks Paystack to create the transaction and
+//      hands the browser a redirect URL to Paystack's hosted checkout.
+//   2. Paystack's servers send a POST request to this URL once payment
+//      completes:
 //        https://your-site.vercel.app/api/paystack-webhook
 //   3. We verify the request really came from Paystack (using a
 //      cryptographic signature check).
@@ -18,19 +23,21 @@
 //      send the same webhook more than once (e.g. if our server is slow
 //      to respond, or due to a network retry) — without this check we'd
 //      add the same donation to the total twice.
-//   5. We then work out WHICH campaign this donation belongs to. The
-//      donate button on campaign.html passes `fundraiser_id` in the
-//      transaction's metadata when it opens the Paystack popup, and
-//      Paystack echoes that same metadata back to us inside the webhook
-//      event — so we always know exactly which patient to credit, even
-//      with thousands of campaigns running at once.
+//   5. We then work out WHICH campaign this donation belongs to. That,
+//      along with the donor's name/email/anonymity choice, the
+//      settlement subaccount actually used, and the platform fee actually
+//      applied, all travel in the transaction's metadata — set entirely
+//      by /api/initialize-donation (our trusted server), never by the
+//      browser — and Paystack echoes that same metadata back to us here.
+//      A donation with a missing or unrecognized fundraiser_id is
+//      rejected and logged, never credited to any campaign — there is
+//      no "default" campaign on a multi-campaign platform.
 //   6. If the reference is new, we insert a row into "donations" (which
 //      has a UNIQUE constraint on paystack_reference as a second line of
-//      defense) — including the donor's name, their optional email,
-//      whether they asked to stay anonymous, AND the payment's gross
-//      amount, Paystack's fee, and the resulting net amount — and only
-//      then update that ONE campaign's row in Supabase: add the NET
-//      amount (never the gross) to raised_amount, add 1 to donor_count.
+//      defense) — including gross amount, Paystack's fee, our platform
+//      fee, and the resulting net amount — and only then update that ONE
+//      campaign's row in Supabase: add the NET amount (never the gross)
+//      to raised_amount, add 1 to donor_count.
 //   7. The next time the frontend calls /api/progress for that campaign,
 //      it will see the new, updated numbers.
 //
@@ -39,13 +46,32 @@
 // "fees" field (an integer in kobo, same unit as "amount") — this is
 // Paystack's own reported transaction fee for that specific payment, not
 // a fixed or guessed percentage. We use that field directly:
-//   gross amount = event.data.amount
-//   Paystack fee = event.data.fees
-//   net amount   = gross amount - Paystack fee
-// If a specific webhook payload is ever missing this field (uncommon,
-// but not something to assume never happens across every payment
-// channel), we fall back to treating the fee as 0 for that one payment
-// rather than inventing a number — see the comment at PAYSTACK_FEE below.
+//   gross amount  = event.data.amount
+//   Paystack fee  = event.data.fees
+//   platform fee  = event.data.metadata.platform_fee_kobo (see below)
+//   net amount    = gross amount - Paystack fee - platform fee
+// If a specific webhook payload is ever missing the "fees" field
+// (uncommon, but not something to assume never happens across every
+// payment channel), we fall back to treating the fee as 0 for that one
+// payment rather than inventing a number — see the comment at
+// PAYSTACK_FEE below.
+//
+// PLATFORM FEE — WHY METADATA IS TRUSTED HERE (AND WHY THIS IS SAFE):
+// The platform fee actually charged on a transaction is fixed the
+// moment /api/initialize-donation calls Paystack (it's what gets passed
+// as "transaction_charge", which Paystack applies immediately as part of
+// the split). That value is NEVER supplied by the browser — the browser
+// only ever sends a donor name/email/amount to /api/initialize-donation;
+// the fee itself is computed entirely server-side from the CURRENT
+// platform-fee master switch at that moment. Reading it back out of
+// metadata here is just retrieving OUR OWN server's earlier decision,
+// via the same trusted metadata echo already relied on for
+// fundraiser_id/donor_name — it is not trusting anything the browser
+// said. This also has to come from metadata rather than being
+// recomputed fresh in this webhook, because the master switch could have
+// been toggled between initialization and webhook delivery — recomputing
+// here could silently drift from what Paystack actually split, which
+// would corrupt the accounting.
 
 import crypto from 'crypto';
 
@@ -132,7 +158,9 @@ export default async function handler(req, res) {
 
   // What the campaign actually receives after Paystack's cut. This is
   // the figure that updates raised_amount — never the gross amount.
-  const netAmount = amountPaid - paystackFee;
+  // (Platform fee, if any, is subtracted further down once we've read
+  // it from metadata below.)
+  const netAmountBeforePlatformFee = amountPaid - paystackFee;
 
   // Paystack's unique reference for this specific transaction. This is
   // the key we use to detect duplicate/retried webhook deliveries.
@@ -157,6 +185,24 @@ export default async function handler(req, res) {
 
   // "Donate anonymously" checkbox — also travels in metadata.
   const isAnonymous = event.data.metadata?.anonymous === true || event.data.metadata?.anonymous === 'true';
+
+  // Which Paystack subaccount (if any) was active for this campaign at
+  // the moment of checkout — decided entirely by /api/initialize-donation
+  // (our server), never the browser. Stored purely as an audit trail; it
+  // never affects the fee/net accounting above, and the actual
+  // settlement split (if any) already happened automatically as part of
+  // THIS SAME Paystack transaction — our server never issues any
+  // separate "settle this donation" call that could be duplicated.
+  const settledToSubaccount = event.data.metadata?.subaccount_code || null;
+
+  // The platform fee actually applied to this specific transaction, as
+  // decided by /api/initialize-donation at the moment checkout began
+  // (see the file header for why this is trusted here). Falls back to 0
+  // if missing, exactly like the Paystack fee fallback above.
+  const platformFeeRaw = event.data.metadata?.platform_fee_kobo;
+  const platformFee = typeof platformFeeRaw === 'number' ? platformFeeRaw / 100 : 0;
+
+  const netAmount = netAmountBeforePlatformFee - platformFee;
 
   if (!reference) {
     console.error('Webhook payload is missing event.data.reference.');
@@ -194,29 +240,45 @@ export default async function handler(req, res) {
     }
 
     // ---- STEP 4: Fetch the correct campaign's row from Supabase ----
-    // If the payment told us which campaign it's for (the normal case on
-    // the new multi-campaign site), look up that exact row. Otherwise
-    // fall back to the very first campaign, which is how the original
-    // single-campaign version of this site behaved — this keeps any old
-    // bookmarked page or cached frontend code from breaking.
-    let fundraiserUrl = `${SUPABASE_URL}/rest/v1/fundraiser?select=id,raised_amount,donor_count&limit=1`;
-    if (fundraiserId) {
-      fundraiserUrl = `${SUPABASE_URL}/rest/v1/fundraiser?select=id,raised_amount,donor_count&id=eq.${encodeURIComponent(fundraiserId)}&limit=1`;
-    } else {
-      console.warn(`Webhook for reference ${reference} had no metadata.fundraiser_id — falling back to the first campaign.`);
+    // This is a multi-campaign platform, so every donation MUST be
+    // attributable to exactly one specific campaign. There is no
+    // "default" campaign to fall back to — a webhook with a missing or
+    // invalid fundraiser_id is rejected and logged rather than silently
+    // credited to whichever campaign happens to be first in the table.
+    // (An earlier version of this file fell back to the first campaign,
+    // which made sense only when this was a single-campaign site; now
+    // that many independent campaigns exist, that fallback would risk
+    // crediting the wrong patient entirely, so it's been removed.)
+    if (!fundraiserId) {
+      console.error(
+        `Webhook for reference ${reference} is missing metadata.fundraiser_id — rejecting without crediting any campaign.`
+      );
+      return res.status(400).json({ error: 'Missing fundraiser_id in transaction metadata.' });
     }
 
-    const getRes = await fetch(fundraiserUrl, {
-      headers: {
-        apikey: SUPABASE_SERVICE_ROLE_KEY,
-        Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-      },
-    });
+    const getRes = await fetch(
+      `${SUPABASE_URL}/rest/v1/fundraiser?select=id,raised_amount,donor_count&id=eq.${encodeURIComponent(fundraiserId)}&limit=1`,
+      {
+        headers: {
+          apikey: SUPABASE_SERVICE_ROLE_KEY,
+          Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+        },
+      }
+    );
+
+    if (!getRes.ok) {
+      const errText = await getRes.text();
+      console.error('Supabase error looking up fundraiser:', errText);
+      return res.status(500).json({ error: 'Failed to look up campaign.' });
+    }
 
     const rows = await getRes.json();
     if (!rows || rows.length === 0) {
-      console.error('No matching fundraiser row found in Supabase.');
-      return res.status(500).json({ error: 'Fundraiser row not found.' });
+      console.error(
+        `Webhook for reference ${reference} references fundraiser_id ${fundraiserId}, which does not exist — ` +
+          `rejecting without crediting any campaign.`
+      );
+      return res.status(400).json({ error: 'Campaign not found for this donation.' });
     }
 
     const current = rows[0];
@@ -244,11 +306,13 @@ export default async function handler(req, res) {
         paystack_reference: reference,
         amount: amountPaid, // gross amount the donor paid
         paystack_fee: paystackFee,
+        platform_fee: platformFee,
         net_amount: netAmount,
         donor_name: donorName,
         donor_email: donorEmail,
         anonymous: isAnonymous,
         fundraiser_id: current.id,
+        settled_to_subaccount: settledToSubaccount,
       }),
     });
 
