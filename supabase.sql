@@ -199,3 +199,125 @@ alter table donations add column if not exists net_amount numeric;
 update donations
 set net_amount = coalesce(net_amount, amount)
 where net_amount is null;
+
+-- =========================================================================
+-- BENEFICIARY / AUTOMATIC SETTLEMENT SYSTEM
+-- =========================================================================
+-- 12. Each campaign can have ONE verified beneficiary bank account,
+-- which Paystack can automatically settle a share of each donation to
+-- (via Paystack's own documented Subaccount feature — see
+-- lib/paystack.js). This is a brand-new table; it does not touch
+-- "fundraiser" or "donations" structurally beyond one small audit column
+-- added at the bottom of this section.
+--
+-- IMPORTANT — how "hybrid" settlement actually works here:
+--   - verification_status starts 'pending'. Nothing is ever settled
+--     automatically until an admin explicitly verifies the account
+--     AND explicitly enables settlement (two separate, deliberate
+--     actions — see api/admin/verify-beneficiary.js and
+--     api/admin/settlement.js).
+--   - settlement_enabled is the actual on/off switch checked at
+--     donation time. An admin can pause it instantly at any time,
+--     regardless of verification status, with no effect on any other
+--     campaign.
+--   - There is no separate "settle this donation" step our own code
+--     performs after the fact — when settlement is enabled, the
+--     donation's split to the beneficiary happens automatically, INSIDE
+--     the same original Paystack transaction (via the "subaccount"
+--     parameter passed at checkout). This is what makes double-
+--     settlement structurally impossible: there's only ever one charge,
+--     and Paystack — not our server — handles crediting the subaccount
+--     as an intrinsic part of processing that one charge.
+create table if not exists beneficiaries (
+  id bigint generated always as identity primary key,
+  fundraiser_id bigint not null unique references fundraiser (id) on delete cascade,
+
+  beneficiary_name text not null,          -- name on the bank account / authorized recipient
+  bank_name text,                          -- human-readable bank name, e.g. "Guaranty Trust Bank"
+  bank_code text,                          -- Paystack's numeric bank code (from the List Banks API)
+  account_number text,                     -- stored as TEXT, never a numeric type
+  account_name text,                       -- name Paystack resolves the account to, once verified
+
+  primary_phone_number text,               -- beneficiary/authorized-recipient contact — PRIVATE
+  secondary_phone_number text,             -- optional — PRIVATE
+
+  -- The % of each donation that stays with the PLATFORM's main Paystack
+  -- account, passed as Paystack's own "percentage_charge" field when the
+  -- subaccount is created. Defaults to 0, meaning the beneficiary
+  -- receives the full net amount and the platform takes nothing extra
+  -- beyond Paystack's own transaction fee (already accounted for
+  -- separately via donations.paystack_fee).
+  settlement_percentage numeric not null default 0,
+
+  verification_status text not null default 'pending', -- 'pending' | 'verified' | 'failed'
+  paystack_subaccount_code text,           -- e.g. "ACCT_xxxxxxxxxx", set once verified
+  settlement_enabled boolean not null default false, -- the actual automatic-settlement on/off switch
+
+  verified_at timestamptz,
+  verified_by text,                        -- which admin username performed the verification
+
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint where conname = 'beneficiaries_verification_status_check'
+  ) then
+    alter table beneficiaries
+      add constraint beneficiaries_verification_status_check
+      check (verification_status in ('pending', 'verified', 'failed'));
+  end if;
+end $$;
+
+-- Same reasoning as every other table here: only our Vercel functions
+-- (using the SERVICE ROLE key) can read or write beneficiary data —
+-- never anonymous visitors, and this table is never queried by any
+-- public-facing endpoint at all.
+alter table beneficiaries enable row level security;
+
+-- 13. Audit trail: record which subaccount (if any) was actually active
+-- for a campaign at the moment of each donation. This is populated by
+-- the webhook from its OWN checkout metadata (the same trusted metadata
+-- channel already used for fundraiser_id/donor_name/anonymous — see
+-- api/paystack-webhook.js) — never a guessed or invented Paystack field.
+alter table donations add column if not exists settled_to_subaccount text;
+
+-- =========================================================================
+-- PLATFORM FEE (1%, capped at ₦1,000 per transaction) — MASTER SWITCH
+-- =========================================================================
+-- 14. Add the platform_fee column to "donations", so every donation can
+-- distinguish THREE separate figures, never combined into one:
+--   amount        — gross amount the donor paid
+--   paystack_fee  — Paystack's own transaction fee (from the "fees" field)
+--   platform_fee  — this platform's own fee (1% of gross, capped at
+--                   ₦1,000), only ever charged when the master switch
+--                   below is ON
+--   net_amount    — amount - paystack_fee - platform_fee: what's
+--                   actually attributable to the campaign/beneficiary
+alter table donations add column if not exists platform_fee numeric not null default 0;
+
+-- 15. A tiny single-row settings table for the platform fee ON/OFF
+-- master switch. This is intentionally the ONLY configurable part of
+-- the platform fee — the 1% rate and ₦1,000 cap are fixed business
+-- rules enforced in code (api/initialize-donation.js), not stored here,
+-- since only an ON/OFF toggle was requested, not an adjustable rate.
+create table if not exists platform_settings (
+  id bigint generated always as identity primary key,
+  platform_fee_enabled boolean not null default false, -- OFF by default, exactly as required
+  updated_at timestamptz not null default now(),
+  updated_by text -- which admin username last changed this
+);
+
+-- Seed the single settings row only if the table is empty — safe to
+-- re-run, and never creates a second row or resets an existing choice.
+insert into platform_settings (platform_fee_enabled)
+select false
+where not exists (select 1 from platform_settings);
+
+alter table platform_settings enable row level security;
+-- No anon policies — only our Vercel functions (service role key) can
+-- read or change this switch. Nothing public-facing ever queries it
+-- directly; the public checkout flow only ever sees its EFFECT (via
+-- api/initialize-donation.js), never the setting itself.

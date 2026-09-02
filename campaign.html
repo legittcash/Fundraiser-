@@ -5,9 +5,6 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Patient Campaign</title>
 
-<!-- Paystack Inline Checkout script (loads Paystack's popup payment widget) -->
-<script src="https://js.paystack.co/v1/inline.js"></script>
-
 <style>
   :root {
     --pink: #ff2e88;
@@ -318,6 +315,16 @@
     text-align: center;
     padding: 14px 0;
   }
+
+  .verifying-banner {
+    background: #eff6ff;
+    color: #1e40af;
+    border-radius: 12px;
+    padding: 12px 14px;
+    font-size: 0.88rem;
+    margin-bottom: 16px;
+    text-align: center;
+  }
 </style>
 </head>
 <body>
@@ -386,6 +393,8 @@
 
           <p class="description">${escapeHtml(campaign.story || '')}</p>
 
+          <div id="verifyingBannerWrap"></div>
+
           <!-- LIVE FUNDRAISING STATS (filled in by JavaScript from /api/progress) -->
           <div id="goalAchievedBadgeWrap"></div>
           <div class="stats-row">
@@ -443,6 +452,31 @@
 
     if (campaign.status === 'active') {
       attachDonateHandler(campaign);
+    }
+
+    // If we just got redirected back here from Paystack's hosted
+    // checkout page, Paystack appends a "reference" (or "trxref")
+    // query parameter. That does NOT mean the payment is confirmed yet
+    // in our own database — the webhook is still the only source of
+    // truth for that — so we just show a friendly "verifying" message
+    // and poll the same way the old in-page popup flow used to.
+    const params = new URLSearchParams(window.location.search);
+    const returnedReference = params.get('reference') || params.get('trxref');
+    if (returnedReference) {
+      const banner = document.getElementById('verifyingBannerWrap');
+      if (banner) {
+        banner.innerHTML = '<div class="verifying-banner">Thank you! We\'re confirming your payment now — this page will update automatically in a few seconds.</div>';
+      }
+      // Give the webhook a few seconds to reach our server and update
+      // Supabase, then refresh the numbers and recent-donors list.
+      setTimeout(() => {
+        loadProgress(campaign.id);
+        loadRecentDonors(campaign.id);
+      }, 3000);
+      setTimeout(() => {
+        loadProgress(campaign.id);
+        loadRecentDonors(campaign.id);
+      }, 7000);
     }
   }
 
@@ -573,26 +607,22 @@
     =========================================================
     STEP 2: HANDLE THE "DONATE NOW" BUTTON
     =========================================================
-    We never touch the Paystack SECRET key on the frontend.
-    Only the PUBLIC key (safe to expose) is used here to open
-    the Paystack Inline popup. The actual confirmation of
-    payment happens later on the backend via a webhook, which
-    is the only trustworthy source of truth for "did this
-    payment really succeed".
+    We never touch the Paystack SECRET key on the frontend, and — as of
+    the server-initiated checkout flow — we no longer need the PUBLIC
+    key here either: donations now start by calling our own
+    /api/initialize-donation endpoint, which talks to Paystack
+    server-side and hands back a URL to redirect the browser to. The
+    actual confirmation of payment still happens later on the backend
+    via the webhook, which remains the only trustworthy source of truth
+    for "did this payment really succeed".
   */
-
-  // The public key is injected into this page at build/deploy time.
-  // On Vercel, we recommend replacing this placeholder using a small
-  // inline script tag generated from the PAYSTACK_PUBLIC_KEY env var
-  // (see README.md for the simplest beginner-friendly way to do this).
-  const PAYSTACK_PUBLIC_KEY = window.PAYSTACK_PUBLIC_KEY || 'pk_test_74617bf8eec51c5488d7fa49ed3e4a6a51519aa3';
 
   function attachDonateHandler(campaign) {
     const donateBtn = document.getElementById('donateBtn');
     const statusMsg = document.getElementById('statusMsg');
     const donorNameError = document.getElementById('donorNameError');
 
-    donateBtn.addEventListener('click', () => {
+    donateBtn.addEventListener('click', async () => {
       const donorName = document.getElementById('donorName').value.trim();
       const email = document.getElementById('donorEmail').value.trim();
       const amount = Number(document.getElementById('donorAmount').value);
@@ -625,65 +655,62 @@
       }
 
       donateBtn.disabled = true;
-      donateBtn.textContent = 'Opening secure payment...';
+      donateBtn.textContent = 'Preparing secure payment...';
 
-      // Paystack's checkout requires an email string to initialize a
-      // transaction, even though our form makes email optional for the
-      // donor. When none was given, we pass a harmless placeholder to
-      // satisfy Paystack — but we NEVER store this placeholder as the
-      // donor's email. The webhook reads the donor's real (possibly
-      // empty) email back out of metadata.donor_email instead of
-      // trusting Paystack's own customer.email field.
-      const emailForPaystack = email || `donor-${Date.now()}@no-email-provided.example.com`;
+      /*
+        =========================================================
+        SERVER-INITIATED CHECKOUT
+        =========================================================
+        The browser only ever sends WHO is donating and HOW MUCH.
+        It never decides (or even knows) which Paystack subaccount
+        this donation might settle to, or whether a platform fee
+        applies — our server (/api/initialize-donation) looks up
+        the campaign's CURRENT beneficiary/settlement state and the
+        CURRENT platform fee setting fresh, at this exact moment,
+        and decides all of that itself. This is what stops an old
+        browser tab from ever being able to use a stale or tampered
+        subaccount after an admin pauses settlement or changes a
+        beneficiary.
 
-      // Open the Paystack Inline popup
-      const handler = PaystackPop.setup({
-        key: PAYSTACK_PUBLIC_KEY,
-        email: emailForPaystack,
-        amount: amount * 100, // Paystack expects the amount in kobo (₦1 = 100 kobo)
-        currency: 'NGN',
-        metadata: {
-          // IMPORTANT: fundraiser_id tells our webhook exactly which
-          // patient's campaign to credit once the payment is confirmed.
-          fundraiser_id: campaign.id,
-          donor_name: donorName,
-          // Empty string (not the placeholder above) if the donor left
-          // email blank — this is what the webhook actually saves.
-          donor_email: email || null,
-          anonymous: anonymous,
-          custom_fields: [
-            { display_name: 'Fundraiser', variable_name: 'fundraiser', value: `Help ${campaign.patient_name}` },
-            { display_name: 'Donor Name', variable_name: 'donor_name', value: donorName },
-          ]
-        },
-        callback: function (response) {
-          // This fires immediately after the popup reports success.
-          // IMPORTANT: this is just the frontend's view of things.
-          // The real, trusted confirmation happens server-side via
-          // the Paystack webhook (api/paystack-webhook.js), which
-          // updates Supabase and therefore the progress bar.
-          statusMsg.textContent = 'Payment received! Updating progress bar...';
-          statusMsg.className = 'status-msg success';
+        On success, we redirect the whole page to Paystack's own
+        hosted checkout (authorization_url) rather than opening an
+        in-page popup — that's a deliberate trade-off: the terms of
+        the transaction (subaccount, fee split) have to be finalized
+        server-side BEFORE Paystack starts collecting payment, which
+        only server-side initialization can do.
+      */
+      try {
+        const res = await fetch('/api/initialize-donation', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            fundraiser_id: campaign.id,
+            donor_name: donorName,
+            donor_email: email || null,
+            amount: amount,
+            anonymous: anonymous,
+          }),
+        });
+        const data = await res.json();
+
+        if (!res.ok || !data.authorization_url) {
+          statusMsg.textContent = data.error || 'Could not start payment. Please try again.';
+          statusMsg.className = 'status-msg error';
           donateBtn.disabled = false;
           donateBtn.textContent = 'Donate Now 💗';
-
-          // Give the webhook a couple of seconds to reach our server
-          // and update Supabase, then refresh the numbers and the
-          // recent-donors list on screen.
-          setTimeout(() => {
-            loadProgress(campaign.id);
-            loadRecentDonors(campaign.id);
-          }, 3000);
-        },
-        onClose: function () {
-          donateBtn.disabled = false;
-          donateBtn.textContent = 'Donate Now 💗';
-          statusMsg.textContent = 'Payment window closed.';
-          statusMsg.className = 'status-msg';
+          return;
         }
-      });
 
-      handler.openIframe();
+        statusMsg.textContent = 'Redirecting you to secure payment...';
+        statusMsg.className = 'status-msg';
+        window.location.href = data.authorization_url;
+      } catch (err) {
+        console.error('Failed to start payment:', err);
+        statusMsg.textContent = 'Something went wrong starting your payment. Please try again.';
+        statusMsg.className = 'status-msg error';
+        donateBtn.disabled = false;
+        donateBtn.textContent = 'Donate Now 💗';
+      }
     });
   }
 </script>

@@ -1,11 +1,12 @@
-# Patient Fundraising Platform — with Admin Dashboard
+# Patient Fundraising Platform — Server-Controlled Settlement & Platform Fee
 
 A real, working fundraising platform that hosts **unlimited patient
-campaigns**, accepts **real Paystack payments**, and updates each
-campaign's progress bar live. You manage everything — creating patients,
-uploading photos, archiving finished campaigns — from a password-protected
-admin dashboard. No GitHub uploads or Supabase table editing required for
-day-to-day use.
+campaigns**, accepts **real Paystack payments**, tracks the exact
+gross/Paystack-fee/platform-fee/net breakdown of every donation, and can
+**automatically settle a share of each donation to a verified
+beneficiary's bank account** — with the server, never the browser, as
+the final authority over where money goes. Everything is managed from a
+password-protected admin dashboard.
 
 Built with plain HTML/CSS/JS, Vercel Serverless Functions, and Supabase.
 
@@ -18,47 +19,279 @@ Built with plain HTML/CSS/JS, Vercel Serverless Functions, and Supabase.
 ## How it works (quick overview)
 
 **Public site**
-1. `index.html` — homepage listing every **active** campaign, with search.
-2. `campaign.html?slug=...` — one patient's fundraising page: photo,
-   story, live progress bar, Recent Donors list, and the Donate button.
-3. The donation form asks for the donor's **name (required)** and an
-   **optional email**, plus a **"Donate anonymously"** checkbox. Donating
-   opens the Paystack popup with the donor's name/email/anonymous choice
-   and the campaign's `id` attached as metadata, so the webhook knows
-   exactly which patient to credit and who gave.
-4. Paystack calls `/api/paystack-webhook` after a real payment. The
-   webhook verifies it, records it in `donations` (including the donor's
-   name and anonymity choice), and updates only that one campaign's
-   totals.
-5. The progress bar's fill is **capped at 100% visually**, even if a
-   campaign raises more than its goal — the true amount raised is always
-   shown as a number, and a "🎉 Goal Achieved" badge appears once the
-   goal is met. Donations keep being accepted after the goal is reached.
-6. `/api/donations` resolves "Anonymous" **on the server**, not in the
-   browser — a donor's real name is never sent to the page at all if they
-   asked to stay anonymous, and donor email is never exposed publicly.
+1. `index.html` — a Jiji-style homepage grid: every **active** campaign
+   as a card showing photo, name, hospital, live progress bar, and a
+   **View Details** button. Cards never show the full patient story,
+   phone numbers, or any beneficiary/bank information.
+2. `campaign.html?slug=...` — one patient's full fundraising page:
+   photo, hospital, diagnosis, full story, live net-raised progress bar,
+   Recent Donors list (with fee breakdown), and the Donate button.
+3. The donation form asks for the donor's **name (required)**, an
+   **optional email**, an amount, and a **"Donate anonymously"**
+   checkbox. Clicking **Donate Now** does **not** open an in-page popup
+   — it calls our own server (`/api/initialize-donation`), which decides
+   everything about settlement and fees, then redirects the browser to
+   Paystack's own hosted checkout page. See "Server-controlled checkout"
+   below for exactly why.
+4. After payment, Paystack redirects the browser back to the campaign
+   page, and separately (asynchronously) calls `/api/paystack-webhook` —
+   the webhook is still the **only** source of truth for whether a
+   payment actually succeeded, and it's what actually updates Supabase.
+   The campaign page just shows a "confirming your payment" message and
+   refreshes itself a few seconds later. The webhook **requires** a
+   valid `fundraiser_id` (set by `/api/initialize-donation` at checkout
+   time) to identify which campaign a donation belongs to — there is no
+   "default" campaign to fall back to on a multi-campaign platform. If
+   that ID is ever missing or doesn't match any campaign, the webhook
+   logs it clearly and rejects the request without crediting anything.
+5. The progress bar's fill is **capped at 100% visually**, even past
+   goal — the true net amount raised is always shown as a number, and a
+   "🎉 Goal Achieved" badge appears once the goal is met. Donations keep
+   being accepted after the goal is reached.
+6. `/api/donations` resolves "Anonymous" **on the server** — a donor's
+   real name is never sent to the page at all if they asked to stay
+   anonymous, and donor email is never exposed publicly. The public donor
+   list shows the Paystack fee breakdown, e.g. *"₦250 payment processing
+   fee · Campaign received ₦9,750."*
 
 **Admin dashboard** (`admin/login.html` → `admin/dashboard.html`)
 1. Log in with a username/password stored as Vercel environment
    variables — never in the database.
-2. Create, edit, archive, or delete campaigns. The admin's private view
-   of recent donations shows real donor names/emails even for donations
-   marked anonymous on the public page.
-3. Each campaign also stores a **private** primary contact phone number
-   (required for new campaigns) and an optional secondary phone number —
-   used to reach the patient or their authorized contact. These are
-   visible only in the admin dashboard's Edit form and are never sent to
-   the public website in any form.
-4. Upload a patient photo directly from your phone — it's stored in
-   Supabase Storage and the public URL is saved automatically.
-5. Photo lifecycle is handled safely everywhere: if creating a campaign
-   fails after its photo already uploaded, the orphaned photo is deleted
-   automatically; replacing a photo only removes the old one after the
-   new one is confirmed saved; deleting a campaign also deletes its photo
-   (and only its photo). If a storage cleanup step ever fails, the
-   dashboard tells you clearly instead of pretending everything succeeded.
-6. See total patients, active campaigns, total raised, total donors, and
-   a feed of recent donations across every campaign.
+2. Four tabs — **Active**, **Goal Achieved**, **Archived**, **All** —
+   over the same campaign list, each with a live count. "Goal Achieved"
+   is based purely on `raised_amount >= goal_amount`, entirely
+   independent of a campaign's archived/active status.
+3. Create, edit, archive, or delete campaigns, with private phone
+   numbers, image upload, and safe image lifecycle (rollback on failed
+   creation, safe replacement, cleanup on delete) — all unchanged.
+4. **Beneficiary & Settlement** — add a verified bank account per
+   campaign, verify it with Paystack, and enable or pause automatic
+   settlement at any time.
+5. **Platform Fee** — a single ON/OFF switch (default **OFF**), stored
+   in Supabase so it persists across logout, redeploys, and devices.
+   When ON, new donations have 1% (capped at ₦1,000) deducted as a
+   platform fee; existing donations are never recalculated.
+6. See total patients, active campaigns, total **net** raised, total
+   donors, total **gross** donations, total **Paystack fees**, and total
+   **platform fees** across the whole platform, plus a feed of recent
+   donations with their full gross/Paystack-fee/platform-fee/net
+   breakdown.
+
+---
+
+## Server-controlled checkout (why this changed)
+
+**The old flow** had `campaign.html` fetch a campaign's Paystack
+subaccount code from a public API, then call `PaystackPop.setup()`
+directly in the browser using only the public key. That meant the
+**browser** decided which subaccount a donation would split to. A
+technically inclined visitor could tamper with that configuration, or a
+browser tab left open across an admin pausing settlement or changing a
+beneficiary could still submit a payment using stale settlement details,
+since nothing forced the browser's claim to be re-checked.
+
+**The current flow** fixes this structurally:
+
+```
+Visitor clicks Donate
+        ↓
+Browser calls POST /api/initialize-donation
+   (sends ONLY: fundraiser_id, donor_name, donor_email, amount, anonymous)
+        ↓
+Server (never the browser) looks up, fresh, right now:
+   - the campaign
+   - its beneficiary's CURRENT verification/settlement status
+   - the platform fee master switch's CURRENT state
+        ↓
+Server calls Paystack's Initialize Transaction API with the
+final, authoritative subaccount + platform fee decision
+        ↓
+Server returns a Paystack-hosted "authorization_url"
+        ↓
+Browser redirects to Paystack's own checkout page
+        ↓
+Paystack webhook (unchanged, still the source of truth)
+        ↓
+Existing donation accounting / progress update
+```
+
+The browser is never told a subaccount code, never sees the platform fee
+setting, and cannot influence either. If an admin pauses settlement or
+swaps a beneficiary while a donor already has the campaign page open,
+the very next `/api/initialize-donation` call (which happens the moment
+they click Donate, not before) picks up the new configuration
+automatically — there is no stale value anywhere in the browser to fall
+back on.
+
+**A real UX trade-off, stated plainly:** because the subaccount/fee
+terms must be finalized *before* Paystack starts collecting payment,
+checkout now redirects to Paystack's own hosted page instead of staying
+in an in-page popup. This is the standard, fully-documented way to do
+server-initiated Paystack transactions.
+
+---
+
+## Donation fee accounting (gross / Paystack fee / platform fee / net)
+
+Every donation now distinguishes **four** figures, never combined:
+
+| Field | Meaning |
+|---|---|
+| `amount` | **Gross** — the exact amount the donor paid |
+| `paystack_fee` | Paystack's own transaction fee for that specific payment |
+| `platform_fee` | This platform's own fee (1% of gross, capped at ₦1,000) — only ever nonzero when the master switch is ON **and** the campaign has a verified, settlement-enabled beneficiary |
+| `net_amount` | `amount - paystack_fee - platform_fee` — what's actually attributable to the campaign/beneficiary |
+
+**Where the Paystack fee comes from:** the documented `fees` field in
+Paystack's `charge.success` webhook payload (kobo, same unit as
+`amount`) — never a guessed number.
+
+**Where the platform fee comes from:** computed entirely server-side in
+`api/initialize-donation.js`, using the fixed formula
+`min(gross × 1%, ₦1,000)`, and only when the master switch (read fresh
+from Supabase at that moment) is ON. This value is then passed to
+Paystack via the documented `transaction_charge` parameter, and
+round-tripped back to the webhook through the same trusted metadata
+channel already used for `fundraiser_id`/`donor_name` — it is a value
+**our own server decided**, never something the browser supplied or
+could influence.
+
+**Precision:** the fee is calculated entirely in **kobo** (Paystack's
+smallest currency unit — 1 naira = 100 kobo), not naira. Rounding to
+whole naira first, then converting to kobo, would throw away up to 99
+kobo of precision on every donation (e.g. a ₦150 donation's true 1% fee
+is ₦1.50/150 kobo — rounding to whole naira first would incorrectly
+charge ₦2/200 kobo instead). There's a single rounding step, at the
+kobo level, since kobo is the smallest unit Paystack itself accepts.
+
+**The platform fee is only ever charged when it can actually be
+collected.** `transaction_charge` only has meaning as part of a Paystack
+split — it requires a `subaccount`. If a campaign has no verified,
+settlement-enabled beneficiary, there is no split at all: the full gross
+amount already goes straight to the platform's main Paystack account, so
+`platform_fee` is forced to `₦0` for that donation regardless of the
+master switch's state. This keeps Supabase's accounting and Paystack's
+actual settlement in agreement at all times — the database never claims
+a fee was collected that Paystack wasn't actually configured to collect.
+
+**Who bears Paystack's own fee:** whenever a subaccount is used,
+Paystack's documented `bearer` parameter is set to `"subaccount"` — the
+beneficiary absorbs Paystack's transaction fee, not the platform's main
+account. This is what makes the beneficiary's real settlement match the
+accounting formula above exactly: `beneficiary receives = gross -
+paystack_fee - platform_fee`. When there's no subaccount, `bearer` is
+never sent at all (it has no meaning outside a split payment).
+
+**`fundraiser.raised_amount` increases by the NET amount only.**
+
+**Historical donations** recorded before fee tracking existed have
+`paystack_fee = 0`, `platform_fee = 0`, and `net_amount = amount` — real
+historical fees were never captured and can't be safely reconstructed,
+so old rows and old `raised_amount` totals are never altered. Changing
+the platform fee master switch never recalculates or alters any
+already-completed donation either — only donations initialized *after*
+a change reflect it.
+
+---
+
+## Beneficiary & automatic settlement system
+
+### The model: automatic by default, admin control when necessary
+Each campaign can have **one** verified beneficiary bank account. Once
+verified **and** explicitly enabled by an admin, every donation to that
+campaign automatically splits between the beneficiary's bank account and
+the platform — decided fresh, server-side, at the moment each donation
+starts (see "Server-controlled checkout" above). There is no separate
+"payout" step your server has to run:
+- **You are never required to manually receive and forward every
+  patient's donations.**
+- **The same donation can never be settled twice** — settlement isn't a
+  separate action at all, it's built into the one Paystack charge,
+  already protected by the existing reference-based duplicate-webhook
+  check.
+- **A problem with one campaign's beneficiary never affects another.**
+- **When settlement is paused**, the very next donation to that campaign
+  (initialized after the pause) is sent to Paystack with no `subaccount`
+  at all — the full gross amount goes to the platform's main account,
+  and `platform_fee` is `₦0` for that donation, exactly as if the
+  campaign never had a beneficiary. Nothing about already-completed
+  donations changes.
+
+### How this is actually implemented (Paystack's documented behavior)
+- **Create Subaccount** (`POST /subaccount`) — creates a Paystack
+  subaccount for the beneficiary and returns a `subaccount_code`.
+- **Resolve Account Number** (`GET /bank/resolve`) — verifies a
+  bank_code + account_number pair and returns the registered name.
+- **List Banks** (`GET /bank`) — powers the admin's bank dropdown.
+- **Initialize Transaction** (`POST /transaction/initialize`) —
+  accepts `subaccount` (which beneficiary to split with),
+  `transaction_charge` (an exact kobo amount that goes to the platform's
+  main account for THIS transaction, overriding the subaccount's default
+  split — this is what makes a variable, capped 1% platform fee
+  possible, per Paystack's own documentation: *"the amount specified
+  goes to the main account regardless of the split configuration"*), and
+  `bearer` (which side absorbs Paystack's own transaction fee).
+- **Who bears Paystack's own fee:** set to `"subaccount"` whenever a
+  subaccount is used, so the beneficiary's settlement matches the
+  gross/Paystack-fee/platform-fee/net accounting above. Never sent when
+  there's no subaccount.
+
+### Verification states
+- **Pending verification** — bank details saved, not yet checked.
+- **Verification Failed** — Paystack couldn't resolve the account.
+- **Verified · Settlement Paused** — confirmed real, subaccount exists,
+  but not yet enabled (or paused).
+- **Settlement Enabled** — the only state in which new donations use the
+  subaccount.
+
+Verifying a beneficiary **never** automatically enables settlement.
+
+### Changing bank details resets verification
+Editing an existing beneficiary's bank code or account number
+automatically resets verification to "Pending" and pauses settlement.
+
+### How to verify a beneficiary and enable settlement
+1. Admin dashboard → find the campaign's row → tap **Beneficiary**.
+2. Fill in name, bank, account number, optional platform fee %, phones.
+   Tap **Save Details**.
+3. Tap **Verify with Paystack**.
+4. Once **Verified · Settlement Paused**, tap **Enable Settlement**.
+5. Tap **Pause Settlement** any time to stop future donations from using
+   it — instantly, with no effect on other campaigns or past donations.
+
+### What's protected/private
+- Bank account numbers are shown **masked** everywhere except the
+  focused edit form.
+- Beneficiary phone numbers, bank name, account number, and verification
+  detail are **never** returned by any public endpoint.
+- The public site never receives a subaccount code, a beneficiary's
+  existence, or the platform fee setting at all — not even indirectly.
+
+---
+
+## Platform fee master switch
+
+- **Default: OFF.** Stored in Supabase's `platform_settings` table (a
+  single row), not browser localStorage — persists across logout,
+  redeploys, and devices.
+- **Rate: 1% of gross, capped at ₦1,000 per transaction.** Fixed in code
+  (`api/initialize-donation.js`), not admin-adjustable — the only control
+  is ON/OFF.
+- **Only an authenticated admin can change it** (`api/admin/platform-fee.js`,
+  behind the same session-cookie check as every other admin endpoint).
+- **The dashboard asks for confirmation** before turning it on or off.
+- **Applies only to newly initialized transactions** — never
+  recalculates or alters already-completed donations, because the fee
+  actually charged is fixed at the moment Paystack's transaction is
+  initialized, not looked up again later.
+- **When OFF:** platform fee is ₦0 for every new donation; a campaign's
+  beneficiary receives the normal settlement amount per its own
+  subaccount configuration.
+- **The switch alone doesn't guarantee a fee is charged.** Turning it ON
+  only takes effect for a campaign that also has a verified,
+  settlement-enabled beneficiary — without a subaccount to split
+  through, Paystack has nothing to collect a platform fee from, so the
+  fee stays ₦0 for that campaign's donations regardless of the switch.
 
 ---
 
@@ -68,271 +301,169 @@ You do **not** need a laptop. Everything below can be done from Chrome on
 an Android phone.
 
 ### 1. Create a GitHub repository
-1. Open **Chrome** and go to [github.com](https://github.com), then sign in
-   (or create a free account).
-2. Tap the **+** icon (top right) → **New repository**.
-3. Name it something like `patient-fundraiser`. Tap **Create repository**.
+1. Open **Chrome** and go to [github.com](https://github.com), sign in.
+2. Tap **+** → **New repository**, name it, **Create repository**.
 
 ### 2. Upload the project files
-1. On your repo's page, tap **Add file** → **Upload files**.
-2. Upload everything, preserving folders: `index.html`, `campaign.html`,
-   `supabase.sql`, `README.md`, `images/lucy.jpg`, the whole `api/` folder
-   (including `api/admin/`, and the newer `api/donations.js`), and the
-   whole `lib/` folder (including the newer `lib/campaign-images.js`).
-   - Chrome may only let you pick files a few at a time — that's fine,
-     just repeat the upload step until every file is added, keeping the
-     same folder names.
-   - If you're updating an existing repo rather than starting fresh,
-     double-check each of these newer files actually made it in:
-     `api/donations.js`, `lib/campaign-images.js`. It's easy to upload a
-     batch of files and miss one on a phone.
-3. Scroll down and tap **Commit changes**.
+Upload everything, preserving folders — see **Project structure** below
+for the complete, current file list. Pay particular attention to the
+newest files: `api/initialize-donation.js`, `api/admin/platform-fee.js`,
+`api/admin/banks.js`, `api/admin/beneficiaries.js`,
+`api/admin/verify-beneficiary.js`, `api/admin/settlement.js`, and
+`lib/paystack.js`.
 
 ### 3. Create a Supabase project
-1. Go to [supabase.com](https://supabase.com) and sign up / log in.
-2. Tap **New project**. Choose a name, set a database password (save it
-   somewhere safe), and pick the region closest to your donors.
-3. Wait 1–2 minutes for the project to finish setting up.
+Go to [supabase.com](https://supabase.com), create a project, note the
+database password.
 
 ### 4. Run `supabase.sql`
-1. In your Supabase project, open the left menu → **SQL Editor** → **New
-   query**.
-2. Open `supabase.sql` from your GitHub repo, copy **all** of it, and
-   paste it into the SQL Editor.
-3. Tap **Run**. This creates the `fundraiser` and `donations` tables
-   (including `donor_name`/`anonymous` on `donations`, and the private
-   `phone_number`/`secondary_phone_number` fields on `fundraiser`),
-   migrates the original Lucy campaign so it still works, sets up the
-   `campaign-images` storage bucket, and makes campaign photos publicly
-   viewable. It's safe to run even if you already ran an older version of
-   this file — everything uses `if not exists` / safe backfills, so
-   re-running it after any update to this project (like this one) is
-   always the right move if something seems to be missing.
+Supabase → **SQL Editor** → **New query** → paste the **entire**
+`supabase.sql` file → **Run**. This creates/updates every table this
+project needs, including `beneficiaries` and `platform_settings`, and is
+always safe to re-run — everything uses `if not exists` / safe
+backfills, and nothing here ever deletes or resets existing data.
 
 ### 4b. Double check the storage bucket exists
-The SQL above creates the `campaign-images` bucket for you, but it's
-worth confirming:
-1. Left menu → **Storage**.
-2. You should see a bucket called `campaign-images` marked **Public**.
-3. If it's missing for any reason, tap **New bucket**, name it exactly
-   `campaign-images`, toggle **Public bucket** on, and create it.
+Storage → confirm a **Public** bucket named exactly `campaign-images`
+exists (create it if not).
 
 ### 5. Copy your environment variables
-You'll need **7** values total:
+You'll need **7** values — no new ones were introduced by this update.
 
-**From Supabase** (Left menu → **Project Settings** → **API**):
-- **Project URL** → `SUPABASE_URL`
-- **service_role** secret key → `SUPABASE_SERVICE_ROLE_KEY` ⚠️ keep secret
+**From Supabase** (Project Settings → API): `SUPABASE_URL`,
+`SUPABASE_SERVICE_ROLE_KEY` ⚠️
 
-**From Paystack** ([dashboard.paystack.com](https://dashboard.paystack.com)
-→ **Settings** → **API Keys & Webhooks**):
-- **Public Key** → `PAYSTACK_PUBLIC_KEY`
-- **Secret Key** → `PAYSTACK_SECRET_KEY` ⚠️ keep secret
-- Set the **Webhook URL** to `https://YOUR-VERCEL-DOMAIN.vercel.app/api/paystack-webhook`
-  (come back and set this after step 7, once you know your real domain)
+**From Paystack** (Settings → API Keys & Webhooks): `PAYSTACK_PUBLIC_KEY`,
+`PAYSTACK_SECRET_KEY` ⚠️ — this is also what the beneficiary/settlement
+system and `/api/initialize-donation` use to talk to Paystack, no
+separate key needed. Set the **Webhook URL** to
+`https://YOUR-VERCEL-DOMAIN.vercel.app/api/paystack-webhook`.
 
-**Choose these yourself** (these protect your admin dashboard):
-- `ADMIN_USERNAME` → any username you like, e.g. `admin`
-- `ADMIN_PASSWORD` → a strong, unique password — this is what guards your
-  dashboard, so don't reuse a password from elsewhere
-- `ADMIN_SESSION_SECRET` → a long random string used to sign login
-  sessions. Easiest way to generate one on your phone: open Chrome, go to
-  a password generator site, and generate a 40+ character random string.
-  It doesn't need to be memorable — you'll never type it in, only paste it
-  into Vercel once.
+**Choose these yourself:** `ADMIN_USERNAME`, `ADMIN_PASSWORD` ⚠️,
+`ADMIN_SESSION_SECRET` ⚠️ (40+ random characters).
 
-### 6. Import your GitHub repo into Vercel
-1. Go to [vercel.com](https://vercel.com) and sign up / log in ("Continue
-   with GitHub" is easiest).
-2. Tap **Add New...** → **Project** → select your repo → **Import**.
-3. Before deploying, open **Environment Variables** and add all 7:
-   - `PAYSTACK_PUBLIC_KEY`
-   - `PAYSTACK_SECRET_KEY`
-   - `SUPABASE_URL`
-   - `SUPABASE_SERVICE_ROLE_KEY`
-   - `ADMIN_USERNAME`
-   - `ADMIN_PASSWORD`
-   - `ADMIN_SESSION_SECRET`
+> Note: `PAYSTACK_PUBLIC_KEY` is still listed and configured as before,
+> but the frontend no longer actively uses it now that checkout is
+> server-initiated — it's kept in the environment variable list for
+> completeness and in case it's needed again in future, but nothing
+> currently reads it from `campaign.html`.
 
-### 7. Deploy
-1. Tap **Deploy**. Wait 1–2 minutes.
-2. Vercel gives you a live URL like `https://patient-fundraiser.vercel.app`.
-3. Go back to Paystack's webhook settings and paste in:
-   `https://patient-fundraiser.vercel.app/api/paystack-webhook`
+### 6. Import into Vercel
+Add New → Project → select repo → add all 7 environment variables →
+**Deploy**.
 
-### 8. Show the public key on the pages
-Since this project intentionally avoids build tools, the Paystack public
-key is pasted directly into the frontend files (it's meant to be public —
-only the **secret** key must stay hidden in Vercel).
-1. On GitHub, open **`campaign.html`**, tap the pencil (✏️) icon.
-2. Find this line:
-   ```js
-   const PAYSTACK_PUBLIC_KEY = window.PAYSTACK_PUBLIC_KEY || 'pk_test_...';
-   ```
-3. Replace the placeholder with your real public key (starting `pk_`),
-   keeping the quotes, and commit.
-4. Vercel automatically redeploys within about a minute.
+### 7. Set the webhook URL
+Go back to Paystack's webhook settings and paste in your real Vercel
+domain + `/api/paystack-webhook`.
 
-### 9. Log in to your admin dashboard and create your first real campaign
-1. Visit `https://YOUR-VERCEL-DOMAIN.vercel.app/admin/login.html`.
-2. Log in with the `ADMIN_USERNAME` / `ADMIN_PASSWORD` you set in step 5.
-3. Tap **+ New Campaign**, fill in the patient's details — including a
-   **primary contact phone number**, which is required for every new
-   campaign — upload their photo, and tap **Save Campaign**. It appears
-   on the homepage immediately. The phone number(s) stay private and are
-   never shown on the public page.
-4. To retire a campaign once its goal is met, tap **Archive** — it stays
-   viewable by direct link but disappears from the homepage list.
+### 8. Log in and create your first real campaign
+Visit `/admin/login.html`, log in, **+ New Campaign**, fill in details
+(primary phone required), upload a photo, **Save Campaign**. Optionally
+tap **Beneficiary** to add and verify a bank account, then enable
+settlement.
 
-### 10. Test with a real Paystack payment
-1. Open a campaign from your homepage.
-2. Enter an email and a small amount (e.g. ₦100), tap **Donate Now**, and
-   complete payment (use Paystack's test cards while your account is
-   still in test mode).
-3. Within a few seconds, refresh — that campaign's raised amount, percent,
-   and donor count should update, and it should also show up under
-   **Recent Donations** in the admin dashboard.
+### 9. Test with a real payment
+Open a campaign, tap **View Details**, donate a small test amount. You
+should be redirected to Paystack's hosted checkout page, then redirected
+back to the campaign page with a "confirming your payment" message; a
+few seconds later the totals and Recent Donors list update.
+
+### Paystack dashboard configuration required
+- The webhook URL — required for any donation to be recorded at all.
+- **Nothing else.** Subaccount creation happens automatically through
+  the admin dashboard's "Verify with Paystack" action.
 
 ---
 
 ## Project structure
 ```
 patient-fundraiser/
-├── index.html                    # Public homepage: lists active campaigns, search
-├── campaign.html                 # Public page for one patient's campaign
+├── index.html                      # Public homepage: Jiji-style campaign cards, search
+├── campaign.html                   # Public campaign details page — donate button calls
+│                                    # /api/initialize-donation and redirects to Paystack's
+│                                    # hosted checkout (no PaystackPop / public key used here anymore)
 ├── admin/
-│   ├── login.html                 # Admin login form
-│   └── dashboard.html             # Manage campaigns, view analytics
+│   ├── login.html                    # Admin login form
+│   └── dashboard.html                # Campaigns (4 tabs), analytics, beneficiary/settlement UI,
+│                                      # Platform Fee master switch
 ├── images/
-│   └── lucy.jpg                   # Fallback image used if a campaign has no photo
+│   └── lucy.jpg                      # Fallback image used if a campaign has no photo
 ├── lib/
-│   ├── admin-auth.js               # Shared login-session helper used by admin APIs
-│   └── campaign-images.js          # Shared helper: safely delete/roll back campaign photos in Storage
+│   ├── admin-auth.js                  # Shared login-session helper used by admin APIs
+│   ├── campaign-images.js             # Shared helper: safely delete/roll back campaign photos in Storage
+│   └── paystack.js                    # Shared helper: List Banks / Resolve Account / Create & Update
+│                                       # Subaccount / Initialize Transaction (server-side checkout)
 ├── api/
-│   ├── campaigns.js                # Public: list active campaigns (+ search) — explicit column list, no private fields
-│   ├── campaign.js                 # Public: fetch one campaign by slug — explicit column list, no private fields
-│   ├── donations.js                # Public: recent donors for one campaign (anonymity resolved server-side)
-│   ├── progress.js                 # Public: live totals for one campaign (or the first, if none specified)
-│   ├── paystack-webhook.js         # Verifies + records real payments, per campaign, with donor name/anonymity
+│   ├── campaigns.js                   # Public: list active campaigns (+ search) — explicit column list
+│   ├── campaign.js                    # Public: fetch one campaign by slug — explicit column list,
+│   │                                   # NEVER returns anything about beneficiaries/subaccounts
+│   ├── initialize-donation.js         # Public: NEW — securely starts a donation server-side;
+│   │                                   # decides settlement subaccount + platform fee, the browser
+│   │                                   # never does
+│   ├── donations.js                   # Public: recent donors for one campaign, incl. gross/fee/net —
+│   │                                   # anonymity resolved server-side
+│   ├── progress.js                    # Public: live totals for one campaign
+│   ├── paystack-webhook.js            # Verifies + records real payments: gross/Paystack-fee/
+│   │                                   # platform-fee/net accounting, per-campaign targeting,
+│   │                                   # settlement audit trail
 │   └── admin/
-│       ├── login.js                 # Checks credentials, issues session cookie
-│       ├── logout.js                # Clears session cookie
-│       ├── me.js                    # Lets dashboard.html check if you're logged in
-│       ├── campaigns.js             # Protected: create / edit / delete / list campaigns, incl. private phone numbers, with safe image lifecycle
-│       ├── upload-image.js          # Protected: uploads a patient photo to Supabase Storage
-│       └── analytics.js             # Protected: dashboard overview numbers
-├── supabase.sql                   # Full schema: tables, migration, storage bucket
-└── README.md                      # This file
+│       ├── login.js                    # Checks credentials, issues session cookie
+│       ├── logout.js                   # Clears session cookie
+│       ├── me.js                       # Lets dashboard.html check if you're logged in
+│       ├── campaigns.js                # Protected: create/edit/delete/list campaigns, safe image lifecycle
+│       ├── upload-image.js             # Protected: uploads a patient photo to Supabase Storage
+│       ├── analytics.js                # Protected: dashboard overview numbers incl. platform fee totals
+│       ├── banks.js                    # Protected: lists Nigerian banks from Paystack
+│       ├── beneficiaries.js            # Protected: view/save a campaign's beneficiary (full or masked)
+│       ├── verify-beneficiary.js       # Protected: resolves the account with Paystack and creates its subaccount
+│       ├── settlement.js               # Protected: enable/pause automatic settlement for one campaign
+│       └── platform-fee.js             # Protected: NEW — the platform fee master switch (ON/OFF), persisted
+├── supabase.sql                     # Full schema: tables, migrations, storage bucket — always safe to re-run
+└── README.md                        # This file
 ```
 
 ## Environment variables reference
 | Variable | Where it's used | Keep secret? |
 |---|---|---|
-| `PAYSTACK_PUBLIC_KEY` | Frontend (`campaign.html`) — opens payment popup | No — safe to expose |
-| `PAYSTACK_SECRET_KEY` | `api/paystack-webhook.js` — verifies payments | **Yes** |
+| `PAYSTACK_PUBLIC_KEY` | Configured but not currently used by the frontend (see note above) | No — safe to expose |
+| `PAYSTACK_SECRET_KEY` | `api/paystack-webhook.js`, `api/initialize-donation.js`, `lib/paystack.js` | **Yes** |
 | `SUPABASE_URL` | All API functions | No, but kept server-side anyway |
 | `SUPABASE_SERVICE_ROLE_KEY` | All API functions — reads/writes database & storage | **Yes** |
 | `ADMIN_USERNAME` | `api/admin/login.js` | **Yes** |
 | `ADMIN_PASSWORD` | `api/admin/login.js` | **Yes** |
 | `ADMIN_SESSION_SECRET` | `lib/admin-auth.js` — signs login sessions | **Yes** |
 
+**No new Vercel environment variables are required** for this update —
+platform fee and settlement logic reuse the existing
+`PAYSTACK_SECRET_KEY` and Supabase credentials.
+
 ---
 
-## How campaigns, donations, and images fit together
-- Every patient is one row in the `fundraiser` table: name, hospital,
-  diagnosis, story, photo URL, goal, and (read-only from the admin's
-  side) `raised_amount` / `donor_count`. It also stores two **private**
-  contact fields — `phone_number` (required for new campaigns) and
-  `secondary_phone_number` (optional) — used only by the admin.
-- Every successful payment is one row in `donations`, linked to the
-  campaign it belongs to via `fundraiser_id`, and keyed by Paystack's
-  unique `paystack_reference` so a retried webhook can never double-count
-  a donation. Each row also stores the donor's name, their optional
-  email, and whether they asked to stay anonymous.
-- Patient photos live in the `campaign-images` Supabase Storage bucket,
-  uploaded through the admin dashboard — you never need to touch GitHub
-  or Supabase's file browser to add a new photo.
-
-## Donor privacy
-- Donor **name is required**; donor **email is optional** — Paystack
-  still requires some email to process the transaction, so a harmless
-  placeholder is used internally when a donor leaves it blank, but that
-  placeholder is never saved as if it were their real email.
-- If a donor ticks **"Donate anonymously,"** their real name is still
-  saved privately in `donations` (so you, the admin, always know who
-  gave), but `/api/donations` — the endpoint the public campaign page
-  uses — resolves them to `"Anonymous"` **on the server**. Their real
-  name is never even sent to the browser in that case.
-- Donor email is never included in any public-facing response, anonymous
-  or not.
-
-## Private contact phone numbers
-Each campaign has two contact fields meant for the admin's own follow-up
-with the patient or their authorized contact — **never for donors or the
-public**:
-- **Primary phone number** — required when creating a new campaign
-  (e.g. `08012345678` or `+2348012345678`). Both local Nigerian formats
-  and international `+` formats are accepted as plain text; there's no
-  format restriction beyond "not empty."
-- **Secondary phone number** — always optional. Can be added, changed, or
-  cleared at any time from the Edit form.
-- Both are stored as plain **text** columns (never numeric), since phone
-  numbers can start with a leading zero or `+` and are never used in math.
-- Existing campaigns created before this feature existed (including the
-  original "Lucy" campaign) simply have a blank phone number on file —
-  they remain fully editable, and the admin is never forced to fill one
-  in just to save an otherwise-unrelated edit.
-- These two fields are only ever selected by admin-only endpoints
-  (`api/admin/campaigns.js`). The public endpoints (`api/campaign.js`,
-  `api/campaigns.js`) select an explicit, named list of columns — never
-  `*` — specifically so a private field can never leak onto the public
-  site just because it exists in the table.
-
-## Image lifecycle safety
-Because campaign photos are uploaded to Supabase Storage in a separate
-step from saving the campaign itself, a few safeguards keep the bucket
-and the database from drifting apart:
-- **Creating a campaign**: if the photo uploads successfully but the
-  campaign row then fails to save (e.g. a duplicate slug, or a database
-  error), the just-uploaded photo is automatically deleted so it doesn't
-  sit in Storage with nothing pointing to it.
-- **Replacing a photo**: the new photo is uploaded and the campaign row
-  is updated *first* — the old photo is only deleted from Storage
-  *after* that update is confirmed successful. If the update fails for
-  any reason, the old photo is left completely untouched.
-- **Deleting a campaign**: removes the campaign row (and its donation
-  history) *and* its photo from Storage — but only that campaign's own
-  photo, never another campaign's.
-- If a Storage cleanup step ever fails on its own (rare, but possible),
-  the admin dashboard shows a clear warning telling you a manual cleanup
-  in Supabase Storage may be needed, rather than silently claiming
-  everything succeeded.
+## Image lifecycle safety (unchanged)
+- **Creating a campaign**: if the photo uploads but the campaign row
+  fails to save, the photo is automatically deleted.
+- **Replacing a photo**: the new photo is saved and the campaign row is
+  updated *first* — the old photo is only deleted *after* success.
+- **Deleting a campaign**: removes the row, its donation history, and
+  its photo — never another campaign's.
 
 ## A note on admin dashboard security
-The dashboard checks your login on every page load and every API call —
-without a valid session, no campaign data or actions are available. Since
-this project deliberately avoids build tools, the dashboard's HTML/CSS
-shell itself is a public file (like everything on the internet), but it's
-empty and non-functional without logging in first. For extra peace of
-mind, keep your `ADMIN_PASSWORD` and `ADMIN_SESSION_SECRET` long and
-unique, and consider enabling Vercel's built-in deployment protection
-features for another layer of defense.
+The dashboard checks your login on every page load and every API call.
+Keep `ADMIN_PASSWORD` and `ADMIN_SESSION_SECRET` long and unique.
 
 ---
 
 ## Notes for beginners
-- You never need to install anything or use a terminal — GitHub,
-  Supabase, and Vercel all work through their websites in Chrome.
-- Every time you edit a file on GitHub and commit, Vercel automatically
-  redeploys your site within about a minute.
-- If a donation doesn't show up, double-check that the Paystack webhook
-  URL matches your Vercel domain exactly, and that `campaign.html`'s
-  Paystack popup is passing `metadata.fundraiser_id` (it does this
-  automatically — no changes needed unless you've customized the file).
-- If uploading a photo fails, make sure the `campaign-images` bucket
-  exists in Supabase Storage and is marked **Public** (step 4b).
-- If creating or editing a campaign fails with a message like *"Could not
-  find the '...' column of 'fundraiser' in the schema cache"* (Postgres
-  error code `PGRST204`), it means `supabase.sql` hasn't been (re-)run
-  against your database — go back to step 4 and run the full file again.
-  It's always safe to re-run.
+- GitHub, Supabase, and Vercel all work through their websites in Chrome
+  — no terminal needed.
+- If a donation doesn't show up, double-check the Paystack webhook URL
+  matches your Vercel domain exactly.
+- If creating/editing a campaign fails with a `PGRST204` "column not
+  found" error, re-run the full `supabase.sql` file.
+- If "Verify with Paystack" fails, the error shown comes directly from
+  Paystack (e.g. invalid account number/bank code) — double-check and
+  retry.
+- If a donor reports being "stuck" after paying, remember the webhook
+  (not the redirect) is the source of truth — check Vercel's function
+  logs for `api/paystack-webhook` if a payment doesn't reflect within a
+  minute or two.
