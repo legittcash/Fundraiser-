@@ -47,7 +47,12 @@ Built with plain HTML/CSS/JS, Vercel Serverless Functions, and Supabase.
 5. The progress bar's fill is **capped at 100% visually**, even past
    goal — the true net amount raised is always shown as a number, and a
    "🎉 Goal Achieved" badge appears once the goal is met. Donations keep
-   being accepted after the goal is reached.
+   being accepted after the goal is reached. `/api/progress` (which
+   supplies these numbers) requires an explicit `?id=` or `?slug=` for
+   every request — there is no default campaign to fall back to, so one
+   campaign's totals can never accidentally be shown for another. A
+   request with neither returns `400`; a request for a campaign that
+   doesn't exist returns `404`.
 6. `/api/donations` resolves "Anonymous" **on the server** — a donor's
    real name is never sent to the page at all if they asked to stay
    anonymous, and donor email is never exposed publicly. The public donor
@@ -194,6 +199,70 @@ a change reflect it.
 
 ---
 
+## Concurrency & robustness
+
+**Fully transactional donation recording.** Recording a donation and
+crediting the campaign for it happens as **one atomic database
+operation**, via a Postgres function called
+`record_donation_and_update_totals(...)` (see `supabase.sql`). This
+function, invoked once per webhook via
+`POST /rest/v1/rpc/record_donation_and_update_totals`:
+1. Confirms the target `fundraiser_id` actually exists (no fallback to
+   any other campaign).
+2. Inserts the donation row using
+   `insert ... on conflict (paystack_reference) do nothing` — the
+   `UNIQUE` constraint on `paystack_reference` makes duplicate detection
+   itself part of the same atomic statement, so a retried/duplicate
+   Paystack webhook can never insert a second donation row or credit a
+   campaign twice.
+3. If (and only if) a new row was actually inserted, credits that
+   campaign's `raised_amount` (by the net amount) and `donor_count` (by
+   1) in the same function call.
+
+Because a single PL/pgSQL function body runs inside the one transaction
+PostgREST opens for that RPC call, steps 2 and 3 either **both** succeed
+or, if anything fails partway through, the **entire thing rolls back
+together** — including the donation insert. This closes a real gap that
+existed in an earlier version of this code: previously, the insert and
+the totals update were two separate database round trips (each
+individually safe, but not atomic *together*), so if the insert
+succeeded and the totals-update call then failed for any reason, the
+donation would be permanently recorded while the campaign was never
+credited — and a Paystack retry of that same webhook would then be
+treated as a duplicate and silently skipped, meaning the campaign would
+never receive that money's credit at all. That can no longer happen.
+
+An earlier, narrower function, `increment_fundraiser_totals(...)`
+(update-only, no insert), remains defined in `supabase.sql` for
+reference but is **no longer called** by the webhook — it's superseded
+by the combined function above, not run alongside it.
+
+**Defensive platform fee cap, enforced twice.** `/api/initialize-donation`
+already caps the platform fee at `min(gross × 1%, ₦1,000)` when it's
+computed. The webhook independently re-enforces that same ₦1,000
+(100,000 kobo) cap on whatever value actually arrives in
+`metadata.platform_fee_kobo` — accepting it as either a number or a
+numeric string, rounding to a whole kobo integer, and clamping it to
+100,000 kobo — so even a corrupted, tampered, or buggy metadata payload
+can never credit a platform fee above ₦1,000 for a single transaction.
+
+**Platform fee metadata parsing.** `platform_fee_kobo` can arrive in
+Paystack's metadata echo as either a number or a numeric string. The
+webhook explicitly parses either representation and rejects anything
+that isn't a finite, non-negative number (`NaN`, `Infinity`, negative
+values, or garbage strings) by falling back to `0` — malformed metadata
+can never produce an unexpected or negative platform fee.
+
+**Donation amount validation.** `/api/initialize-donation` validates the
+requested amount with `Number.isFinite()` rather than a plain truthy
+check, so `NaN`, `Infinity`, and `-Infinity` are rejected outright (a
+plain `!amount || amount < 100` check lets `Infinity` slip through,
+since it's truthy and isn't `< 100`) — alongside the existing rejection
+of zero, negative numbers, non-numeric input, and amounts below the
+₦100 minimum.
+
+---
+
 ## Beneficiary & automatic settlement system
 
 ### The model: automatic by default, admin control when necessary
@@ -277,7 +346,7 @@ automatically resets verification to "Pending" and pauses settlement.
 - **Rate: 1% of gross, capped at ₦1,000 per transaction.** Fixed in code
   (`api/initialize-donation.js`), not admin-adjustable — the only control
   is ON/OFF.
-- **Only an authenticated admin can change it** (`api/admin/platform-fee.js`,
+- **Only an authenticated admin can change it** (`api/admin/beneficiaries.js?route=platform-fee`,
   behind the same session-cookie check as every other admin endpoint).
 - **The dashboard asks for confirmation** before turning it on or off.
 - **Applies only to newly initialized transactions** — never
@@ -306,11 +375,10 @@ an Android phone.
 
 ### 2. Upload the project files
 Upload everything, preserving folders — see **Project structure** below
-for the complete, current file list. Pay particular attention to the
-newest files: `api/initialize-donation.js`, `api/admin/platform-fee.js`,
-`api/admin/banks.js`, `api/admin/beneficiaries.js`,
-`api/admin/verify-beneficiary.js`, `api/admin/settlement.js`, and
-`lib/paystack.js`.
+for the complete, current file list (9 API files total). Pay particular
+attention to the router-style consolidated files: `api/admin/auth.js`,
+`api/admin/beneficiaries.js`, `api/admin/campaigns.js`,
+`api/initialize-donation.js`, and `lib/paystack.js`.
 
 ### 3. Create a Supabase project
 Go to [supabase.com](https://supabase.com), create a project, note the
@@ -376,6 +444,17 @@ few seconds later the totals and Recent Donors list update.
 ---
 
 ## Project structure
+
+> **Note on Vercel's Hobby plan function limit:** Vercel's Hobby plan
+> caps a deployment at **12 Serverless Functions** (each file under
+> `api/` counts as one). This project intentionally consolidates several
+> related admin operations into fewer, router-style files — using a
+> `?route=` or `?action=` query parameter to pick which section of the
+> file handles a given request — to stay comfortably under that limit
+> (**9 functions total**) while keeping every feature working exactly as
+> before. This is purely a file-organization choice; none of the
+> underlying logic changed.
+
 ```
 patient-fundraiser/
 ├── index.html                      # Public homepage: Jiji-style campaign cards, search
@@ -393,13 +472,12 @@ patient-fundraiser/
 │   ├── campaign-images.js             # Shared helper: safely delete/roll back campaign photos in Storage
 │   └── paystack.js                    # Shared helper: List Banks / Resolve Account / Create & Update
 │                                       # Subaccount / Initialize Transaction (server-side checkout)
-├── api/
+├── api/                              # 9 files total = 9 Vercel Serverless Functions
 │   ├── campaigns.js                   # Public: list active campaigns (+ search) — explicit column list
 │   ├── campaign.js                    # Public: fetch one campaign by slug — explicit column list,
 │   │                                   # NEVER returns anything about beneficiaries/subaccounts
-│   ├── initialize-donation.js         # Public: NEW — securely starts a donation server-side;
-│   │                                   # decides settlement subaccount + platform fee, the browser
-│   │                                   # never does
+│   ├── initialize-donation.js         # Public: securely starts a donation server-side; decides
+│   │                                   # settlement subaccount + platform fee, the browser never does
 │   ├── donations.js                   # Public: recent donors for one campaign, incl. gross/fee/net —
 │   │                                   # anonymity resolved server-side
 │   ├── progress.js                    # Public: live totals for one campaign
@@ -407,17 +485,19 @@ patient-fundraiser/
 │   │                                   # platform-fee/net accounting, per-campaign targeting,
 │   │                                   # settlement audit trail
 │   └── admin/
-│       ├── login.js                    # Checks credentials, issues session cookie
-│       ├── logout.js                   # Clears session cookie
-│       ├── me.js                       # Lets dashboard.html check if you're logged in
-│       ├── campaigns.js                # Protected: create/edit/delete/list campaigns, safe image lifecycle
-│       ├── upload-image.js             # Protected: uploads a patient photo to Supabase Storage
-│       ├── analytics.js                # Protected: dashboard overview numbers incl. platform fee totals
-│       ├── banks.js                    # Protected: lists Nigerian banks from Paystack
-│       ├── beneficiaries.js            # Protected: view/save a campaign's beneficiary (full or masked)
-│       ├── verify-beneficiary.js       # Protected: resolves the account with Paystack and creates its subaccount
-│       ├── settlement.js               # Protected: enable/pause automatic settlement for one campaign
-│       └── platform-fee.js             # Protected: NEW — the platform fee master switch (ON/OFF), persisted
+│       ├── auth.js                     # Protected/login: login + logout + session check, via
+│       │                                # ?action=login | ?action=logout | ?action=me
+│       │                                # (previously three separate files: login.js, logout.js, me.js)
+│       ├── campaigns.js                # Protected: create/edit/delete/list campaigns, safe image
+│       │                                # lifecycle, PLUS ?route=analytics (dashboard overview numbers)
+│       │                                # and ?route=upload-image (patient photo upload) — previously
+│       │                                # three separate files: campaigns.js, analytics.js, upload-image.js
+│       └── beneficiaries.js            # Protected: view/save a campaign's beneficiary (full or masked),
+│                                        # PLUS ?route=banks (Paystack bank list), ?route=verify (Paystack
+│                                        # account verification + subaccount creation), ?route=settlement
+│                                        # (enable/pause), and ?route=platform-fee (the master switch) —
+│                                        # previously five separate files: beneficiaries.js, banks.js,
+│                                        # verify-beneficiary.js, settlement.js, platform-fee.js
 ├── supabase.sql                     # Full schema: tables, migrations, storage bucket — always safe to re-run
 └── README.md                        # This file
 ```
@@ -429,8 +509,8 @@ patient-fundraiser/
 | `PAYSTACK_SECRET_KEY` | `api/paystack-webhook.js`, `api/initialize-donation.js`, `lib/paystack.js` | **Yes** |
 | `SUPABASE_URL` | All API functions | No, but kept server-side anyway |
 | `SUPABASE_SERVICE_ROLE_KEY` | All API functions — reads/writes database & storage | **Yes** |
-| `ADMIN_USERNAME` | `api/admin/login.js` | **Yes** |
-| `ADMIN_PASSWORD` | `api/admin/login.js` | **Yes** |
+| `ADMIN_USERNAME` | `api/admin/auth.js` (login) | **Yes** |
+| `ADMIN_PASSWORD` | `api/admin/auth.js` (login) | **Yes** |
 | `ADMIN_SESSION_SECRET` | `lib/admin-auth.js` — signs login sessions | **Yes** |
 
 **No new Vercel environment variables are required** for this update —
