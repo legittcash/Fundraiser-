@@ -648,7 +648,7 @@
         return;
       }
 
-      if (!amount || amount < 100) {
+      if (!Number.isFinite(amount) || amount < 100) {
         statusMsg.textContent = 'Minimum donation is ₦100.';
         statusMsg.className = 'status-msg error';
         return;

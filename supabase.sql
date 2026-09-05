@@ -321,3 +321,193 @@ alter table platform_settings enable row level security;
 -- read or change this switch. Nothing public-facing ever queries it
 -- directly; the public checkout flow only ever sees its EFFECT (via
 -- api/initialize-donation.js), never the setting itself.
+
+-- =========================================================================
+-- ATOMIC FUNDRAISER TOTAL UPDATE (race-safe concurrent donations)
+-- =========================================================================
+-- 16. This function fixes a real race condition: the webhook used to
+-- READ fundraiser.raised_amount into JavaScript, add the new donation's
+-- net_amount, then WRITE the calculated total back with a PATCH. If two
+-- donations to the SAME campaign were processed by two separate webhook
+-- invocations at nearly the same moment, one update could silently
+-- overwrite the other's contribution — a classic read-modify-write race.
+--
+-- This function performs the increment as a single atomic UPDATE
+-- statement instead: "raised_amount = raised_amount + p_net_amount" is
+-- evaluated by Postgres directly against whatever the row's CURRENT
+-- value is at that exact instant, under a row lock, with no
+-- JavaScript-held stale value involved at all. Two concurrent calls for
+-- the same fundraiser_id are safely serialized by Postgres itself —
+-- neither can overwrite the other's contribution.
+--
+-- This does NOT change (and is not a substitute for) the existing
+-- reference-based duplicate-webhook protection in api/paystack-webhook.js
+-- — that check still happens first, before this function is ever called,
+-- so a duplicate/retried webhook still never reaches this function twice
+-- for the same donation.
+--
+-- "create or replace function" makes this safe to re-run: running it
+-- again just redefines the same function with the same behavior, it
+-- never touches existing table data.
+create or replace function increment_fundraiser_totals(
+  p_fundraiser_id bigint,
+  p_net_amount numeric
+)
+returns table (
+  id bigint,
+  raised_amount numeric,
+  donor_count integer
+)
+language sql
+as $$
+  update fundraiser
+  set
+    raised_amount = fundraiser.raised_amount + p_net_amount,
+    donor_count = fundraiser.donor_count + 1,
+    updated_at = now()
+  where fundraiser.id = p_fundraiser_id
+  returning fundraiser.id, fundraiser.raised_amount, fundraiser.donor_count;
+$$;
+
+-- Let our Vercel functions (using the SERVICE ROLE key) call this
+-- function via Supabase's auto-generated RPC endpoint
+-- (POST /rest/v1/rpc/increment_fundraiser_totals). We explicitly revoke
+-- execute from "anon" and "authenticated" (and the implicit PUBLIC
+-- grant every new function gets) so this can never be called directly
+-- by a public website visitor — then explicitly grant it back to
+-- "service_role" only, since revoking PUBLIC would otherwise also take
+-- away our own backend's ability to call it.
+revoke all on function increment_fundraiser_totals(bigint, numeric) from public;
+revoke all on function increment_fundraiser_totals(bigint, numeric) from anon;
+revoke all on function increment_fundraiser_totals(bigint, numeric) from authenticated;
+grant execute on function increment_fundraiser_totals(bigint, numeric) to service_role;
+
+-- =========================================================================
+-- FULLY TRANSACTIONAL DONATION RECORDING (insert + credit in ONE call)
+-- =========================================================================
+-- 17. The webhook used to perform the donation INSERT and the totals
+-- update (via increment_fundraiser_totals above) as TWO separate
+-- database round trips. That closed the concurrent-donation race
+-- (increment_fundraiser_totals is still atomic on its own), but left a
+-- different gap: if the INSERT succeeded and the second call somehow
+-- failed (a dropped connection, a transient Supabase error, etc.), the
+-- donation would be permanently recorded in "donations" while the
+-- campaign's raised_amount/donor_count were never credited for it — and
+-- because the donation now exists, Paystack's retry of the same webhook
+-- would be treated as a duplicate and skipped, so the campaign would
+-- NEVER receive that money's credit.
+--
+-- This function fixes that by doing both steps inside ONE PostgreSQL
+-- function call. A single PL/pgSQL function body runs inside the one
+-- transaction that PostgREST opens for that RPC call — so if anything
+-- inside this function fails partway through, EVERYTHING it did (the
+-- donation insert included) is rolled back automatically. There is no
+-- way to end up with a recorded donation whose campaign total was never
+-- updated, or vice versa.
+--
+-- Duplicate protection is now handled with "insert ... on conflict
+-- (paystack_reference) do nothing" — the UNIQUE constraint on that
+-- column makes duplicate detection itself part of the same atomic
+-- statement, closing even the tiny race window that existed before
+-- between a separate "check if it exists" query and the INSERT that
+-- followed it. If nothing was inserted (a duplicate), is_duplicate is
+-- returned as true and the fundraiser totals are left completely
+-- untouched — donor_count and raised_amount can never be incremented
+-- twice for the same Paystack reference.
+--
+-- "create or replace function" makes this safe to re-run. This is a
+-- NEW function (different name/signature) rather than an in-place
+-- replacement of increment_fundraiser_totals, since it does meaningfully
+-- more (it also owns the donation insert) and Postgres does not allow
+-- CREATE OR REPLACE to change an existing function's return type. The
+-- webhook (api/paystack-webhook.js) now calls ONLY this function —
+-- increment_fundraiser_totals is no longer called from application code,
+-- but is left defined here rather than dropped, since dropping it isn't
+-- necessary for correctness and this project avoids destructive changes
+-- unless specifically asked for.
+create or replace function record_donation_and_update_totals(
+  p_fundraiser_id bigint,
+  p_paystack_reference text,
+  p_amount numeric,
+  p_paystack_fee numeric,
+  p_platform_fee numeric,
+  p_net_amount numeric,
+  p_donor_name text,
+  p_donor_email text,
+  p_anonymous boolean,
+  p_settled_to_subaccount text
+)
+returns table (
+  is_duplicate boolean,
+  donation_id bigint,
+  fundraiser_id bigint,
+  raised_amount numeric,
+  donor_count integer
+)
+language plpgsql
+as $$
+declare
+  v_donation_id bigint;
+  v_raised_amount numeric;
+  v_donor_count integer;
+begin
+  -- Confirm the target campaign actually exists before doing anything
+  -- else — there is no fallback to "the first campaign" or any other
+  -- default; a donation for a nonexistent fundraiser_id is rejected
+  -- outright, and nothing is written.
+  if not exists (select 1 from fundraiser f where f.id = p_fundraiser_id) then
+    raise exception 'Fundraiser % does not exist', p_fundraiser_id;
+  end if;
+
+  insert into donations (
+    paystack_reference, amount, paystack_fee, platform_fee, net_amount,
+    donor_name, donor_email, anonymous, fundraiser_id, settled_to_subaccount
+  )
+  values (
+    p_paystack_reference, p_amount, p_paystack_fee, p_platform_fee, p_net_amount,
+    p_donor_name, p_donor_email, p_anonymous, p_fundraiser_id, p_settled_to_subaccount
+  )
+  on conflict (paystack_reference) do nothing
+  returning donations.id into v_donation_id;
+
+  if v_donation_id is null then
+    -- Nothing was inserted — a donation with this exact Paystack
+    -- reference already exists (a duplicate/retried webhook, or a
+    -- concurrent call that won the race). Report it as a duplicate and
+    -- return WITHOUT crediting the campaign a second time.
+    select f.raised_amount, f.donor_count into v_raised_amount, v_donor_count
+    from fundraiser f where f.id = p_fundraiser_id;
+
+    return query select true, null::bigint, p_fundraiser_id, v_raised_amount, v_donor_count;
+    return;
+  end if;
+
+  -- New donation recorded — atomically credit the campaign in the SAME
+  -- transaction as the insert above.
+  update fundraiser
+  set
+    raised_amount = fundraiser.raised_amount + p_net_amount,
+    donor_count = fundraiser.donor_count + 1,
+    updated_at = now()
+  where fundraiser.id = p_fundraiser_id
+  returning fundraiser.raised_amount, fundraiser.donor_count
+  into v_raised_amount, v_donor_count;
+
+  return query select false, v_donation_id, p_fundraiser_id, v_raised_amount, v_donor_count;
+end;
+$$;
+
+-- Same access pattern as increment_fundraiser_totals above: only our
+-- own trusted server (via the SERVICE ROLE key) may ever call this.
+revoke all on function record_donation_and_update_totals(
+  bigint, text, numeric, numeric, numeric, numeric, text, text, boolean, text
+) from public;
+revoke all on function record_donation_and_update_totals(
+  bigint, text, numeric, numeric, numeric, numeric, text, text, boolean, text
+) from anon;
+revoke all on function record_donation_and_update_totals(
+  bigint, text, numeric, numeric, numeric, numeric, text, text, boolean, text
+) from authenticated;
+grant execute on function record_donation_and_update_totals(
+  bigint, text, numeric, numeric, numeric, numeric, text, text, boolean, text
+) to service_role;
