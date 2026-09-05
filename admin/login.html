@@ -88,7 +88,7 @@
     =========================================================
     ADMIN LOGIN
     =========================================================
-    We POST the username/password to /api/admin/login. That
+    We POST the username/password to /api/admin/auth?action=login. That
     function checks them against ADMIN_USERNAME/ADMIN_PASSWORD
     (Vercel environment variables — never stored in Supabase),
     and if they match, sets a secure, HttpOnly session cookie.
@@ -109,7 +109,7 @@
     const password = document.getElementById('password').value;
 
     try {
-      const res = await fetch('/api/admin/login', {
+      const res = await fetch('/api/admin/auth?action=login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username, password }),

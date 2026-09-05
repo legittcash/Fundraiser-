@@ -432,14 +432,14 @@
     STEP 0: CHECK THE ADMIN IS ACTUALLY LOGGED IN
     =========================================================
     Anyone can technically open this HTML file's URL, but every
-    piece of real data on it only loads after /api/admin/me
+    piece of real data on it only loads after /api/admin/auth?action=me
     confirms a valid session cookie. Without that cookie, every
     admin API call below will fail with 401, so we redirect to
     the login page immediately instead of showing a broken page.
   */
   async function checkAuth() {
     try {
-      const res = await fetch('/api/admin/me');
+      const res = await fetch('/api/admin/auth?action=me');
       if (!res.ok) {
         window.location.href = 'login.html';
         return;
@@ -458,7 +458,7 @@
   checkAuth();
 
   document.getElementById('logoutBtn').addEventListener('click', async () => {
-    await fetch('/api/admin/logout', { method: 'POST' });
+    await fetch('/api/admin/auth?action=logout', { method: 'POST' });
     window.location.href = 'login.html';
   });
 
@@ -469,7 +469,7 @@
   */
   async function loadAnalytics() {
     try {
-      const res = await fetch('/api/admin/analytics');
+      const res = await fetch('/api/admin/campaigns?route=analytics');
       if (!res.ok) return;
       const data = await res.json();
 
@@ -542,7 +542,7 @@
     const label = document.getElementById('platformFeeStatusLabel');
     const btn = document.getElementById('platformFeeToggleBtn');
     try {
-      const res = await fetch('/api/admin/platform-fee');
+      const res = await fetch('/api/admin/beneficiaries?route=platform-fee');
       if (!res.ok) {
         label.textContent = 'Could not load platform fee status.';
         return;
@@ -580,7 +580,7 @@
     const btn = document.getElementById('platformFeeToggleBtn');
     btn.disabled = true;
     try {
-      const res = await fetch('/api/admin/platform-fee', {
+      const res = await fetch('/api/admin/beneficiaries?route=platform-fee', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ enabled: turningOn }),
@@ -885,8 +885,8 @@
   };
 
   // ---- Image upload: read the chosen file as base64, then send it to
-  // our own /api/admin/upload-image endpoint, which stores it in
-  // Supabase Storage and returns a public URL.
+  // our own /api/admin/campaigns?route=upload-image endpoint, which
+  // stores it in Supabase Storage and returns a public URL.
   photoInput.addEventListener('change', async () => {
     const file = photoInput.files[0];
     if (!file) return;
@@ -897,7 +897,7 @@
 
     try {
       const base64 = await readFileAsBase64(file);
-      const res = await fetch('/api/admin/upload-image', {
+      const res = await fetch('/api/admin/campaigns?route=upload-image', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ fileBase64: base64, contentType: file.type }),
@@ -1031,7 +1031,7 @@
   async function loadBankList() {
     const select = document.getElementById('beneficiaryBank');
     try {
-      const res = await fetch('/api/admin/banks');
+      const res = await fetch('/api/admin/beneficiaries?route=banks');
       const data = await res.json();
       if (!res.ok) {
         select.innerHTML = '<option value="">Could not load banks</option>';
@@ -1179,7 +1179,7 @@
     beneficiaryFormError.textContent = '';
 
     try {
-      const res = await fetch('/api/admin/verify-beneficiary', {
+      const res = await fetch('/api/admin/beneficiaries?route=verify', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ fundraiser_id: Number(fundraiserId) }),
@@ -1210,7 +1210,7 @@
     beneficiaryFormError.textContent = '';
 
     try {
-      const res = await fetch('/api/admin/settlement', {
+      const res = await fetch('/api/admin/beneficiaries?route=settlement', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ fundraiser_id: Number(fundraiserId), action }),
