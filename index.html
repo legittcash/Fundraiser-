@@ -63,82 +63,129 @@
     box-shadow: 0 2px 10px rgba(0,0,0,0.04);
   }
 
+  /* ==========================================================
+     CAMPAIGN CARD GRID — compact, mobile-first, 2 columns by
+     default (marketplace/Jiji-style listing spirit), scaling up
+     to more columns as the screen gets wider.
+     ========================================================== */
   .campaign-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
-    gap: 20px;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 12px;
+  }
+
+  /* Tablet-ish widths: a little more room, so 3 columns fit comfortably */
+  @media (min-width: 640px) {
+    .campaign-grid {
+      grid-template-columns: repeat(3, 1fr);
+      gap: 16px;
+    }
+  }
+
+  /* Desktop-ish widths: 4 columns, same compact card design */
+  @media (min-width: 960px) {
+    .campaign-grid {
+      grid-template-columns: repeat(4, 1fr);
+    }
   }
 
   .campaign-card {
     background: var(--card-bg);
-    border-radius: 18px;
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.06);
+    border-radius: 14px;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.06);
     overflow: hidden;
     text-decoration: none;
     color: inherit;
     display: flex;
     flex-direction: column;
     transition: transform 0.15s ease, box-shadow 0.15s ease;
+    /* Lets the card shrink inside its grid cell instead of forcing the
+       grid wider — required for the text-truncation rules below to
+       actually work instead of overflowing the 2-column layout. */
+    min-width: 0;
   }
 
   .campaign-card:hover {
-    transform: translateY(-3px);
-    box-shadow: 0 12px 28px rgba(0, 0, 0, 0.1);
+    transform: translateY(-2px);
+    box-shadow: 0 8px 20px rgba(0, 0, 0, 0.1);
   }
 
+  /* Patient portrait photo.
+     IMPORTANT: object-fit is CONTAIN, not cover — the entire uploaded
+     portrait (including the patient's face) must always stay fully
+     visible. A compact fixed height keeps cards short; if a portrait's
+     aspect ratio doesn't exactly fill this box, the browser simply
+     letterboxes it (empty space, filled by the background color below)
+     rather than cropping any part of the photo. */
   .campaign-img {
     width: 100%;
-    height: 170px;
-    object-fit: cover;
-    background: #f0f0f3;
+    height: 140px;
+    object-fit: contain;
+    background: #f0f0f3; /* letterbox fill so empty space isn't jarring */
+    display: block;
   }
 
   .campaign-body {
-    padding: 14px 16px 18px;
+    padding: 10px 12px 12px;
     flex: 1;
     display: flex;
     flex-direction: column;
+    min-width: 0;
   }
 
+  /* Long patient names never break the compact card layout — they
+     truncate with an ellipsis instead of wrapping or overflowing. */
   .campaign-name {
-    font-size: 1.05rem;
+    font-size: 0.92rem;
     font-weight: 700;
     color: var(--text-dark);
-    margin: 0 0 4px;
+    margin: 0 0 2px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
+  /* Same protection for long hospital names. */
   .campaign-hospital {
     color: var(--text-muted);
-    font-size: 0.82rem;
-    margin-bottom: 10px;
+    font-size: 0.72rem;
+    margin-bottom: 8px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   .campaign-stats-row {
     display: flex;
     justify-content: space-between;
     align-items: baseline;
-    margin-bottom: 6px;
+    margin-bottom: 5px;
+    gap: 6px;
   }
 
   .campaign-amount {
     font-weight: 700;
     color: var(--text-dark);
-    font-size: 1rem;
+    font-size: 0.85rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   .campaign-percent {
     color: var(--green);
     font-weight: 600;
-    font-size: 0.85rem;
+    font-size: 0.75rem;
+    white-space: nowrap;
   }
 
   .progress-track {
     background: #e5e7eb;
     border-radius: 999px;
-    height: 10px;
+    height: 7px;
     width: 100%;
     overflow: hidden;
-    margin-bottom: 8px;
+    margin-bottom: 6px;
   }
 
   .progress-fill {
@@ -150,8 +197,23 @@
 
   .campaign-donors {
     color: var(--text-muted);
-    font-size: 0.8rem;
+    font-size: 0.68rem;
     margin-top: auto;
+    margin-bottom: 8px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .view-details-btn {
+    display: block;
+    text-align: center;
+    background: var(--pink);
+    color: #fff;
+    font-weight: 700;
+    font-size: 0.75rem;
+    padding: 7px;
+    border-radius: 8px;
   }
 
   .status-msg {
@@ -254,6 +316,7 @@
             <div class="progress-fill" style="width: ${percent}%;"></div>
           </div>
           <div class="campaign-donors">${donors} donor${donors === 1 ? '' : 's'} · Goal ₦${goal.toLocaleString()}</div>
+          <span class="view-details-btn">View Details →</span>
         </div>
       </a>
     `;
