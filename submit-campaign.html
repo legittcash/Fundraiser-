@@ -1,0 +1,395 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Start a Fundraiser</title>
+<style>
+  :root {
+    --pink: #ff2e88;
+    --pink-dark: #e0217a;
+    --bg: #f6f7fb;
+    --card-bg: #ffffff;
+    --text-dark: #1f2937;
+    --text-muted: #6b7280;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background: var(--bg);
+    min-height: 100vh;
+    padding: 20px 12px 60px;
+  }
+  .page-wrap { max-width: 480px; margin: 0 auto; }
+
+  .back-link {
+    display: inline-block;
+    color: var(--text-muted);
+    text-decoration: none;
+    font-size: 0.9rem;
+    margin-bottom: 14px;
+  }
+
+  .card {
+    background: var(--card-bg);
+    border-radius: 18px;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.08);
+    padding: 22px 20px 26px;
+  }
+
+  h1 { font-size: 1.3rem; color: var(--text-dark); margin: 0 0 6px; }
+  p.sub { color: var(--text-muted); font-size: 0.88rem; margin: 0 0 20px; line-height: 1.4; }
+
+  h2.section-title {
+    font-size: 0.95rem;
+    color: var(--text-dark);
+    margin: 22px 0 4px;
+    border-top: 1px solid #f0f0f3;
+    padding-top: 18px;
+  }
+  h2.section-title:first-of-type { border-top: none; padding-top: 0; margin-top: 0; }
+
+  .privacy-note {
+    font-size: 0.78rem;
+    color: var(--text-muted);
+    margin: 0 0 12px;
+    background: #f9fafb;
+    border-radius: 10px;
+    padding: 10px 12px;
+  }
+
+  label { display: block; font-size: 0.85rem; color: var(--text-muted); margin: 12px 0 6px; }
+  input, textarea {
+    width: 100%;
+    padding: 11px 13px;
+    border: 1px solid #e5e7eb;
+    border-radius: 10px;
+    font-size: 0.95rem;
+    font-family: inherit;
+  }
+  textarea { min-height: 90px; resize: vertical; }
+
+  .bank-results {
+    display: none;
+    max-height: 170px;
+    overflow-y: auto;
+    border: 1px solid #e5e7eb;
+    border-radius: 10px;
+    margin-top: 6px;
+    background: #fff;
+  }
+  .bank-results.open { display: block; }
+  .bank-result-item {
+    padding: 9px 12px;
+    font-size: 0.88rem;
+    cursor: pointer;
+    border-bottom: 1px solid #f3f4f6;
+  }
+  .bank-result-item:last-child { border-bottom: none; }
+  .bank-result-item:hover, .bank-result-item:active { background: #f9fafb; }
+  .bank-result-empty { padding: 9px 12px; font-size: 0.85rem; color: var(--text-muted); }
+
+  .image-preview {
+    width: 100%;
+    max-height: 220px;
+    object-fit: contain;
+    border-radius: 10px;
+    margin-top: 10px;
+    background: #f0f0f3;
+    display: none;
+  }
+  .image-preview.visible { display: block; }
+
+  button[type="submit"] {
+    width: 100%;
+    background: var(--pink);
+    color: #fff;
+    border: none;
+    padding: 14px;
+    font-size: 1rem;
+    font-weight: 700;
+    border-radius: 12px;
+    cursor: pointer;
+    margin-top: 24px;
+  }
+  button[type="submit"]:hover { background: var(--pink-dark); }
+  button[type="submit"]:disabled { opacity: 0.6; cursor: not-allowed; }
+
+  .form-error {
+    color: #dc2626;
+    font-size: 0.85rem;
+    margin-top: 12px;
+    text-align: center;
+  }
+
+  .success-panel {
+    text-align: center;
+    padding: 40px 10px;
+  }
+  .success-panel .icon { font-size: 2.5rem; margin-bottom: 10px; }
+  .success-panel h1 { font-size: 1.2rem; }
+  .success-panel p { color: var(--text-muted); font-size: 0.9rem; line-height: 1.5; }
+  .success-panel a {
+    display: inline-block;
+    margin-top: 18px;
+    color: var(--pink-dark);
+    font-weight: 600;
+    text-decoration: none;
+    font-size: 0.9rem;
+  }
+</style>
+</head>
+<body>
+
+<div class="page-wrap">
+  <a class="back-link" href="index.html">&larr; Back to campaigns</a>
+
+  <div class="card" id="formCard">
+    <h1>Start a Fundraiser</h1>
+    <p class="sub">
+      Tell us about the patient and where donations should eventually be paid out.
+      Every submission is reviewed by our team before it goes live — it will not be
+      visible to donors until approved.
+    </p>
+
+    <form id="submitForm">
+      <h2 class="section-title">Patient / Campaign Information</h2>
+
+      <label for="patientName">Patient name *</label>
+      <input type="text" id="patientName" required />
+
+      <label for="hospital">Hospital</label>
+      <input type="text" id="hospital" />
+
+      <label for="diagnosis">Diagnosis</label>
+      <input type="text" id="diagnosis" placeholder="e.g. Kidney Failure" />
+
+      <label for="story">Story</label>
+      <textarea id="story" placeholder="Explain what the patient needs help with..."></textarea>
+
+      <label for="goalAmount">Fundraising goal (₦) *</label>
+      <input type="number" id="goalAmount" min="1" required />
+
+      <label for="photoInput">Patient photo</label>
+      <input type="file" id="photoInput" accept="image/jpeg,image/png,image/webp" />
+      <img class="image-preview" id="imagePreview" alt="Preview" />
+
+      <label for="phoneNumber">Primary contact phone *</label>
+      <input type="tel" id="phoneNumber" placeholder="e.g. 08012345678 or +2348012345678" required />
+
+      <label for="secondaryPhoneNumber">Secondary phone (optional)</label>
+      <input type="tel" id="secondaryPhoneNumber" placeholder="e.g. 08012345678 or +2348012345678" />
+
+      <h2 class="section-title">Beneficiary / Payout Information</h2>
+      <p class="privacy-note">
+        🔒 This information is private. It's used only by our team to verify the
+        recipient and set up settlement — it is never shown publicly on the campaign
+        page or anywhere else on the site.
+      </p>
+
+      <label for="benefName">Beneficiary full name *</label>
+      <input type="text" id="benefName" placeholder="Name on the bank account" required />
+
+      <label for="bankSearch">Bank *</label>
+      <input type="text" id="bankSearch" placeholder="Type to search, e.g. GT..." autocomplete="off" required />
+      <input type="hidden" id="bankCode" />
+      <input type="hidden" id="bankName" />
+      <div class="bank-results" id="bankResults"></div>
+
+      <label for="accountNumber">Account number *</label>
+      <input type="text" id="accountNumber" inputmode="numeric" placeholder="e.g. 0123456789" required />
+
+      <label for="benefPhone">Beneficiary contact phone (optional)</label>
+      <input type="tel" id="benefPhone" />
+
+      <button type="submit" id="submitBtn">Submit for Review</button>
+
+      <div class="form-error" id="formError"></div>
+    </form>
+  </div>
+
+  <div class="card success-panel" id="successCard" style="display:none;">
+    <div class="icon">🎉</div>
+    <h1>Thank you!</h1>
+    <p id="successMessage">Your campaign has been submitted and is pending review by our team.</p>
+    <a href="index.html">Return to homepage</a>
+  </div>
+</div>
+
+<script>
+  /*
+    =========================================================
+    BANK SEARCH — same pattern as the admin dashboard's
+    combined campaign+beneficiary form, reusing the same
+    public bank-list endpoint (no admin session required for
+    this one specific route — see api/admin/beneficiaries.js).
+    =========================================================
+  */
+  let bankListCache = [];
+
+  async function loadBankList() {
+    try {
+      const res = await fetch('/api/admin/beneficiaries?route=banks');
+      const data = await res.json();
+      if (res.ok) bankListCache = data.banks || [];
+    } catch (err) {
+      console.error('Failed to load bank list:', err);
+    }
+  }
+  loadBankList();
+
+  function escapeHtml(str) {
+    const div = document.createElement('div');
+    div.textContent = str ?? '';
+    return div.innerHTML;
+  }
+
+  const bankSearch = document.getElementById('bankSearch');
+  const bankCode = document.getElementById('bankCode');
+  const bankName = document.getElementById('bankName');
+  const bankResults = document.getElementById('bankResults');
+
+  bankSearch.addEventListener('input', () => {
+    bankCode.value = '';
+    bankName.value = '';
+
+    const query = bankSearch.value.trim().toLowerCase();
+    if (!query) {
+      bankResults.classList.remove('open');
+      bankResults.innerHTML = '';
+      return;
+    }
+
+    const matches = bankListCache.filter((b) => b.name.toLowerCase().includes(query)).slice(0, 8);
+    if (matches.length === 0) {
+      bankResults.innerHTML = '<div class="bank-result-empty">No matching banks found.</div>';
+      bankResults.classList.add('open');
+      return;
+    }
+
+    bankResults.innerHTML = matches
+      .map((b) => `<div class="bank-result-item" data-code="${escapeHtml(b.code)}" data-name="${escapeHtml(b.name)}">${escapeHtml(b.name)}</div>`)
+      .join('');
+    bankResults.classList.add('open');
+  });
+
+  bankResults.addEventListener('click', (e) => {
+    const item = e.target.closest('.bank-result-item');
+    if (!item || !item.dataset.code) return;
+    bankCode.value = item.dataset.code;
+    bankName.value = item.dataset.name;
+    bankSearch.value = item.dataset.name;
+    bankResults.classList.remove('open');
+    bankResults.innerHTML = '';
+  });
+
+  document.addEventListener('click', (e) => {
+    if (!bankResults.contains(e.target) && e.target !== bankSearch) {
+      bankResults.classList.remove('open');
+    }
+  });
+
+  /*
+    =========================================================
+    PHOTO PREVIEW
+    =========================================================
+  */
+  const photoInput = document.getElementById('photoInput');
+  const imagePreview = document.getElementById('imagePreview');
+  let selectedFileBase64 = null;
+  let selectedFileContentType = null;
+
+  photoInput.addEventListener('change', () => {
+    const file = photoInput.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      selectedFileBase64 = reader.result;
+      selectedFileContentType = file.type;
+      imagePreview.src = selectedFileBase64;
+      imagePreview.classList.add('visible');
+    };
+    reader.readAsDataURL(file);
+  });
+
+  /*
+    =========================================================
+    SUBMIT
+    =========================================================
+    This posts everything — patient info AND beneficiary/payout
+    info — to /api/submit-campaign in one request. The backend
+    creates the campaign as 'pending' and the beneficiary as
+    unverified with settlement disabled; nothing here can ever
+    make either of those active/verified/enabled — only an
+    admin reviewing it afterward can do that.
+  */
+  const submitForm = document.getElementById('submitForm');
+  const submitBtn = document.getElementById('submitBtn');
+  const formError = document.getElementById('formError');
+
+  submitForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    formError.textContent = '';
+
+    const payload = {
+      patient_name: document.getElementById('patientName').value.trim(),
+      hospital: document.getElementById('hospital').value.trim(),
+      diagnosis: document.getElementById('diagnosis').value.trim(),
+      story: document.getElementById('story').value.trim(),
+      goal_amount: Number(document.getElementById('goalAmount').value),
+      phone_number: document.getElementById('phoneNumber').value.trim(),
+      secondary_phone_number: document.getElementById('secondaryPhoneNumber').value.trim(),
+      beneficiary_name: document.getElementById('benefName').value.trim(),
+      bank_code: bankCode.value,
+      bank_name: bankName.value,
+      account_number: document.getElementById('accountNumber').value.trim(),
+      beneficiary_phone: document.getElementById('benefPhone').value.trim(),
+    };
+
+    if (selectedFileBase64 && selectedFileContentType) {
+      payload.fileBase64 = selectedFileBase64;
+      payload.contentType = selectedFileContentType;
+    }
+
+    if (!payload.patient_name || !payload.goal_amount || !payload.phone_number) {
+      formError.textContent = 'Please fill in the patient name, goal amount, and contact phone.';
+      return;
+    }
+    if (!payload.beneficiary_name || !payload.bank_code || !payload.account_number) {
+      formError.textContent = 'Please select a bank from the search results and fill in the beneficiary name and account number.';
+      return;
+    }
+
+    submitBtn.disabled = true;
+    submitBtn.textContent = 'Submitting...';
+
+    try {
+      const res = await fetch('/api/submit-campaign', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json();
+
+      if (!res.ok) {
+        formError.textContent = data.error || 'Something went wrong. Please try again.';
+        submitBtn.disabled = false;
+        submitBtn.textContent = 'Submit for Review';
+        return;
+      }
+
+      document.getElementById('formCard').style.display = 'none';
+      document.getElementById('successMessage').textContent = data.message || 'Your campaign has been submitted and is pending review.';
+      document.getElementById('successCard').style.display = 'block';
+    } catch (err) {
+      console.error(err);
+      formError.textContent = 'Something went wrong. Please try again.';
+      submitBtn.disabled = false;
+      submitBtn.textContent = 'Submit for Review';
+    }
+  });
+</script>
+
+</body>
+</html>
