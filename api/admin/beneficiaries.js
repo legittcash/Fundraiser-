@@ -11,11 +11,21 @@
 //   GET  /api/admin/beneficiaries?fundraiser_id=123   -> one campaign's full beneficiary detail
 //   GET  /api/admin/beneficiaries?all=1                -> masked summary for every campaign
 //   POST /api/admin/beneficiaries                      -> create/update beneficiary base info
-//   GET  /api/admin/beneficiaries?route=banks           -> list Nigerian banks (from Paystack)
+//   GET  /api/admin/beneficiaries?route=banks           -> list Nigerian banks (from Paystack) — PUBLIC, see below
 //   POST /api/admin/beneficiaries?route=verify           { fundraiser_id } -> verify + create subaccount
 //   POST /api/admin/beneficiaries?route=settlement        { fundraiser_id, action } -> enable/pause settlement
 //   GET  /api/admin/beneficiaries?route=platform-fee     -> read the platform fee master switch
 //   POST /api/admin/beneficiaries?route=platform-fee      { enabled } -> set the platform fee master switch
+//
+// IMPORTANT: ?route=banks is the one exception to "everything here
+// requires an admin session". A list of Nigerian bank names/codes is
+// just Paystack's own public reference data — it doesn't reveal
+// anything about any campaign, donor, or beneficiary — so it's exposed
+// without authentication. This lets the public visitor campaign
+// submission form (submit-campaign.html) reuse this exact same
+// endpoint for its own bank-search field, rather than a second,
+// duplicate bank-listing endpoint being created. Every other route on
+// this file still requires a valid admin session.
 //
 // Every campaign has AT MOST one beneficiary row, enforced by the
 // unique constraint on beneficiaries.fundraiser_id. Note that the
@@ -453,6 +463,14 @@ async function handleBeneficiaryCrud(req, res, { SUPABASE_URL, SUPABASE_SERVICE_
 }
 
 export default async function handler(req, res) {
+  const route = req.query.route;
+
+  // The bank list is public reference data — no campaign, donor, or
+  // beneficiary information is in it — so it's the one route on this
+  // file that doesn't require an admin session. This is what lets the
+  // public visitor submission form search banks too.
+  if (route === 'banks') return handleBanks(req, res);
+
   if (rejectIfNotAdmin(req, res)) return;
 
   const supabaseConfig = getSupabaseConfig();
@@ -460,9 +478,6 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: 'Server is missing Supabase configuration.' });
   }
 
-  const route = req.query.route;
-
-  if (route === 'banks') return handleBanks(req, res);
   if (route === 'verify') return handleVerify(req, res, supabaseConfig);
   if (route === 'settlement') return handleSettlement(req, res, supabaseConfig);
   if (route === 'platform-fee') return handlePlatformFee(req, res, supabaseConfig);

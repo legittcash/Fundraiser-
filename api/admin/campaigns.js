@@ -5,11 +5,32 @@
 // cookie (checked by lib/admin-auth.js) or it's rejected with 401.
 //
 // Supported requests:
-//   GET    /api/admin/campaigns              -> list every campaign (active + archived)
+//   GET    /api/admin/campaigns              -> list every campaign (active + archived + pending + rejected)
 //   GET    /api/admin/campaigns?search=lucy  -> list campaigns whose name matches
-//   POST   /api/admin/campaigns              -> create a new campaign
-//   PATCH  /api/admin/campaigns?id=123       -> edit an existing campaign
+//   POST   /api/admin/campaigns              -> create a new campaign TOGETHER WITH its beneficiary
+//   PATCH  /api/admin/campaigns?id=123       -> edit an existing campaign (also used for approve/reject/archive/reactivate)
 //   DELETE /api/admin/campaigns?id=123       -> permanently delete a campaign
+//
+// COMBINED CAMPAIGN + BENEFICIARY CREATION: the admin "+ New Campaign"
+// form always includes beneficiary/payout fields (beneficiary_name,
+// bank_code, bank_name, account_number, and the two phone numbers)
+// alongside the campaign fields, in the SAME POST body — beneficiary
+// name, bank, and account number are REQUIRED, exactly like the public
+// visitor submission flow (api/submit-campaign.js) already requires
+// them. This endpoint validates all of that FIRST, before creating
+// anything, then creates the campaign, then creates the linked
+// beneficiary row (via lib/beneficiary.js) using the new campaign's id.
+// If the beneficiary insert still fails for some other reason after the
+// campaign was created (a genuine database error, not missing input),
+// the campaign row (and its uploaded photo) are rolled back — the same
+// compensating-rollback pattern already used elsewhere in this file for
+// a failed slug-collision retry — so a submission never ends up
+// half-created (a campaign with no beneficiary, or vice versa).
+// The beneficiary created this way ALWAYS starts as 'pending'
+// verification with settlement disabled and no Paystack subaccount —
+// exactly like a beneficiary created through the existing standalone
+// "Beneficiary" admin form. Only the existing verification workflow
+// (api/admin/beneficiaries.js) can ever change that.
 //
 // This file ALSO absorbs what used to be two separate files —
 // api/admin/analytics.js and api/admin/upload-image.js — via a `route`
@@ -27,7 +48,8 @@
 
 import crypto from 'crypto';
 import { rejectIfNotAdmin } from '../../lib/admin-auth.js';
-import { deleteCampaignImage } from '../../lib/campaign-images.js';
+import { deleteCampaignImage, uploadCampaignImage } from '../../lib/campaign-images.js';
+import { insertBeneficiary } from '../../lib/beneficiary.js';
 
 function getSupabaseConfig() {
   const SUPABASE_URL = (process.env.SUPABASE_URL || '').replace(/\/+$/, '');
@@ -62,6 +84,35 @@ function generateSlug(patientName) {
     .replace(/(^-|-$)/g, '');
   const randomSuffix = crypto.randomBytes(5).toString('hex');
   return `${base || 'patient'}-${randomSuffix}`;
+}
+
+// Deletes a just-created campaign row (and, best-effort, its uploaded
+// photo) — used to roll back a combined campaign+beneficiary creation
+// when the campaign succeeded but the beneficiary failed, so a
+// submission never ends up half-created. Deleting the fundraiser row
+// also removes any beneficiary row already inserted for it, via the
+// existing "on delete cascade" foreign key — though in the normal
+// failure path here, the beneficiary insert is what failed, so there's
+// usually nothing there to cascade yet.
+async function rollbackCampaign(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, headers, campaign, imageUrl) {
+  try {
+    await fetch(`${SUPABASE_URL}/rest/v1/fundraiser?id=eq.${campaign.id}`, {
+      method: 'DELETE',
+      headers,
+    });
+  } catch (err) {
+    console.error(`Failed to roll back campaign ${campaign.id} after a linked beneficiary failure:`, err);
+  }
+
+  if (imageUrl) {
+    const cleanup = await deleteCampaignImage(imageUrl);
+    if (!cleanup.skipped && !cleanup.deleted) {
+      console.error(
+        `Rolled-back campaign's photo could not be removed from storage. Manual cleanup needed ` +
+          `in Supabase Storage (bucket "campaign-images"): ${imageUrl}. Storage error: ${cleanup.error}`
+      );
+    }
+  }
 }
 
 // =========================================================================
@@ -138,63 +189,26 @@ async function handleAnalytics(req, res, { SUPABASE_URL, SUPABASE_SERVICE_ROLE_K
 }
 
 // =========================================================================
-// route=upload-image — from the original api/admin/upload-image.js
+// route=upload-image — now a thin wrapper around the shared
+// lib/campaign-images.js uploadCampaignImage() helper, which is also
+// used by the public api/submit-campaign.js endpoint. This used to
+// duplicate the full upload implementation here; it's now the single
+// shared implementation instead.
 // =========================================================================
-const MAX_IMAGE_BYTES = 3 * 1024 * 1024; // 3MB
-const ALLOWED_CONTENT_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
-
-async function handleUploadImage(req, res, { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY }) {
+async function handleUploadImage(req, res) {
   if (req.method !== 'POST') {
     res.setHeader('Allow', ['POST']);
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
   const { fileBase64, contentType } = req.body || {};
+  const result = await uploadCampaignImage(fileBase64, contentType);
 
-  if (!fileBase64 || !contentType) {
-    return res.status(400).json({ error: 'A file and its content type are required.' });
-  }
-  if (!ALLOWED_CONTENT_TYPES.includes(contentType)) {
-    return res.status(400).json({ error: 'Only JPG, PNG, or WEBP images are allowed.' });
+  if (!result.ok) {
+    return res.status(result.status || 500).json({ error: result.error });
   }
 
-  const base64Data = fileBase64.includes(',') ? fileBase64.split(',')[1] : fileBase64;
-  const fileBuffer = Buffer.from(base64Data, 'base64');
-
-  if (fileBuffer.length > MAX_IMAGE_BYTES) {
-    return res.status(400).json({ error: 'Image is too large. Please use a photo under 3MB.' });
-  }
-
-  const extension = contentType.split('/')[1];
-  const fileName = `patient-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${extension}`;
-
-  try {
-    const uploadResponse = await fetch(
-      `${SUPABASE_URL}/storage/v1/object/campaign-images/${fileName}`,
-      {
-        method: 'POST',
-        headers: {
-          apikey: SUPABASE_SERVICE_ROLE_KEY,
-          Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-          'Content-Type': contentType,
-        },
-        body: fileBuffer,
-      }
-    );
-
-    if (!uploadResponse.ok) {
-      const errText = await uploadResponse.text();
-      console.error('Supabase Storage upload failed:', errText);
-      return res.status(500).json({ error: 'Failed to upload image. Make sure the "campaign-images" bucket exists (see README).' });
-    }
-
-    const publicUrl = `${SUPABASE_URL}/storage/v1/object/public/campaign-images/${fileName}`;
-
-    return res.status(200).json({ url: publicUrl });
-  } catch (err) {
-    console.error('Unexpected error uploading image:', err);
-    return res.status(500).json({ error: 'Unexpected server error.' });
-  }
+  return res.status(200).json({ url: result.url });
 }
 
 export default async function handler(req, res) {
@@ -208,7 +222,7 @@ export default async function handler(req, res) {
 
   const route = req.query.route;
   if (route === 'analytics') return handleAnalytics(req, res, { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY });
-  if (route === 'upload-image') return handleUploadImage(req, res, { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY });
+  if (route === 'upload-image') return handleUploadImage(req, res);
 
   try {
     // ---------------------------------------------------------------
@@ -256,6 +270,22 @@ export default async function handler(req, res) {
         return res.status(400).json({ error: 'A primary contact phone number is required.' });
       }
       const secondaryPhoneNumber = (body.secondary_phone_number || '').trim() || null;
+
+      // Beneficiary/payout details are now REQUIRED when creating a
+      // campaign through this endpoint — every admin-created campaign
+      // must have its beneficiary set up in the same submission, exactly
+      // like a visitor submission (api/submit-campaign.js) already
+      // requires. Validated here, before we even attempt to create the
+      // campaign row, so a missing beneficiary never leaves an orphaned
+      // campaign behind that then needs a rollback.
+      const beneficiaryName = (body.beneficiary_name || '').trim();
+      const beneficiaryBankCode = body.bank_code;
+      const beneficiaryAccountNumber = (body.account_number || '').trim();
+      if (!beneficiaryName || !beneficiaryBankCode || !beneficiaryAccountNumber) {
+        return res.status(400).json({
+          error: 'Beneficiary name, bank, and account number are all required to create a campaign.',
+        });
+      }
 
       // The admin dashboard uploads the photo to Supabase Storage in a
       // SEPARATE request (api/admin/upload-image.js) before ever calling
@@ -346,7 +376,41 @@ export default async function handler(req, res) {
         });
       }
 
-      return res.status(201).json({ campaign: created[0] });
+      const newCampaignRecord = created[0];
+
+      // ---- Create the linked beneficiary in the SAME request ----
+      // Required fields were already validated above, before the
+      // campaign row was even created — this always runs now, since
+      // every campaign created through this endpoint must have a
+      // beneficiary. If it fails here (a genuine database error rather
+      // than missing input), we roll back the campaign rather than
+      // leaving one without its required beneficiary.
+      const beneficiaryResult = await insertBeneficiary(
+        { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY },
+        {
+          fundraiserId: newCampaignRecord.id,
+          beneficiaryName,
+          bankCode: beneficiaryBankCode,
+          bankName: body.bank_name || null,
+          accountNumber: beneficiaryAccountNumber,
+          primaryPhoneNumber: body.beneficiary_phone || null,
+          secondaryPhoneNumber: body.beneficiary_secondary_phone || null,
+        }
+      );
+
+      if (!beneficiaryResult.ok) {
+        console.error('Failed to create linked beneficiary, rolling back campaign:', beneficiaryResult.error);
+        await rollbackCampaign(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, headers, newCampaignRecord, imageUrl);
+        return res.status(500).json({
+          error: 'Campaign could not be saved because its beneficiary details failed to save. Nothing was created — please try again.',
+          details: beneficiaryResult.error,
+        });
+      }
+
+      return res.status(201).json({ campaign: newCampaignRecord, beneficiary: beneficiaryResult.data });
+    }
+
+      return res.status(201).json({ campaign: newCampaignRecord });
     }
 
     // ---------------------------------------------------------------
@@ -381,8 +445,14 @@ export default async function handler(req, res) {
         if (body[field] !== undefined) updates[field] = body[field];
       }
 
-      if (updates.status && !['active', 'archived'].includes(updates.status)) {
-        return res.status(400).json({ error: 'Status must be "active" or "archived".' });
+      // 'pending' and 'rejected' are here for visitor campaign
+      // submissions (see api/submit-campaign.js) — a visitor submission
+      // starts as 'pending', and admin approval/rejection is just a
+      // PATCH to this same endpoint (status: 'active' to approve,
+      // 'rejected' to reject), reusing this existing endpoint rather
+      // than adding a separate approve/reject one.
+      if (updates.status && !['active', 'archived', 'pending', 'rejected'].includes(updates.status)) {
+        return res.status(400).json({ error: 'Status must be "active", "archived", "pending", or "rejected".' });
       }
       if (Object.keys(updates).length === 0) {
         return res.status(400).json({ error: 'No editable fields were provided.' });
