@@ -161,6 +161,8 @@
   }
   .badge.active { background: #dcfce7; color: #166534; }
   .badge.archived { background: #fef3c7; color: #92400e; }
+  .badge.pending { background: #dbeafe; color: #1e40af; }
+  .badge.rejected { background: #fee2e2; color: #991b1b; }
 
   .row-actions { display: flex; gap: 6px; flex-wrap: wrap; }
   .row-actions button {
@@ -230,6 +232,27 @@
   .modal-actions .btn-primary { flex: 1; }
   .form-error { color: #dc2626; font-size: 0.85rem; margin-top: 10px; }
   .field-error { color: #dc2626; font-size: 0.8rem; margin: -6px 0 10px; }
+
+  /* Searchable bank combobox (type-to-filter list under a text input) */
+  .bank-results {
+    display: none;
+    max-height: 170px;
+    overflow-y: auto;
+    border: 1px solid #e5e7eb;
+    border-radius: 10px;
+    margin: -6px 0 10px;
+    background: #fff;
+  }
+  .bank-results.open { display: block; }
+  .bank-result-item {
+    padding: 9px 12px;
+    font-size: 0.88rem;
+    cursor: pointer;
+    border-bottom: 1px solid #f3f4f6;
+  }
+  .bank-result-item:last-child { border-bottom: none; }
+  .bank-result-item:hover, .bank-result-item:active { background: #f9fafb; }
+  .bank-result-empty { padding: 9px 12px; font-size: 0.85rem; color: var(--text-muted); }
   .image-preview { width: 100%; height: 140px; object-fit: cover; border-radius: 10px; margin-top: 10px; background: #f0f0f3; display: none; }
   .image-preview.visible { display: block; }
 
@@ -291,6 +314,7 @@
        existing data or API calls. -->
   <div class="tabs" id="campaignTabs">
     <button class="tab-btn active" data-tab="active">Active <span class="tab-count" id="countActive">0</span></button>
+    <button class="tab-btn" data-tab="pending">Pending Review <span class="tab-count" id="countPending">0</span></button>
     <button class="tab-btn" data-tab="goal_achieved">Goal Achieved <span class="tab-count" id="countGoalAchieved">0</span></button>
     <button class="tab-btn" data-tab="archived">Archived <span class="tab-count" id="countArchived">0</span></button>
     <button class="tab-btn" data-tab="all">All <span class="tab-count" id="countAll">0</span></button>
@@ -366,7 +390,38 @@
       <select id="statusSelect" style="width:100%; padding:10px 12px; border:1px solid #e5e7eb; border-radius:10px; font-size:0.95rem;">
         <option value="active">Active</option>
         <option value="archived">Archived</option>
+        <option value="pending">Pending Review</option>
+        <option value="rejected">Rejected</option>
       </select>
+
+      <!-- BENEFICIARY / PAYOUT DETAILS — required, only shown when
+           creating a brand-new campaign. A campaign can never be
+           created without its beneficiary. Once a campaign exists, that
+           beneficiary's verification/settlement is managed through the
+           dedicated "Beneficiary" button/modal instead, so this
+           creation-only section is hidden while editing. -->
+      <div id="newCampaignBeneficiarySection">
+        <h3 style="font-size:0.95rem; color:var(--text-dark); margin:20px 0 4px; border-top:1px solid #f0f0f3; padding-top:16px;">
+          Beneficiary / Payout Details
+        </h3>
+        <p style="font-size:0.78rem; color:var(--text-muted); margin:0 0 10px;">
+          🔒 Private — bank details are never shown publicly. Required to create a
+          campaign; verification and settlement are still handled separately
+          afterward via the "Beneficiary" button.
+        </p>
+
+        <label for="newBenefName">Beneficiary full name *</label>
+        <input type="text" id="newBenefName" placeholder="Name on the bank account" required />
+
+        <label for="newBenefBankSearch">Bank *</label>
+        <input type="text" id="newBenefBankSearch" placeholder="Type to search, e.g. GT..." autocomplete="off" required />
+        <input type="hidden" id="newBenefBankCode" />
+        <input type="hidden" id="newBenefBankName" />
+        <div class="bank-results" id="newBenefBankResults"></div>
+
+        <label for="newBenefAccountNumber">Account number *</label>
+        <input type="text" id="newBenefAccountNumber" inputmode="numeric" placeholder="e.g. 0123456789" required />
+      </div>
 
       <div class="modal-actions">
         <button type="button" class="btn-secondary" id="cancelModalBtn">Cancel</button>
@@ -656,12 +711,14 @@
     return goal > 0 && raised >= goal;
   }
 
-  // The four tabs are just different views over the SAME already-loaded
+  // The tabs are just different views over the SAME already-loaded
   // list — no extra API calls, no separate data source.
   function filterCampaignsByTab(campaigns, tab) {
     switch (tab) {
       case 'active':
         return campaigns.filter((c) => c.status === 'active');
+      case 'pending':
+        return campaigns.filter((c) => c.status === 'pending');
       case 'goal_achieved':
         return campaigns.filter(hasReachedGoal);
       case 'archived':
@@ -674,6 +731,7 @@
 
   function updateTabCountsAndRender() {
     document.getElementById('countActive').textContent = filterCampaignsByTab(currentCampaignsCache, 'active').length;
+    document.getElementById('countPending').textContent = filterCampaignsByTab(currentCampaignsCache, 'pending').length;
     document.getElementById('countGoalAchieved').textContent = filterCampaignsByTab(currentCampaignsCache, 'goal_achieved').length;
     document.getElementById('countArchived').textContent = filterCampaignsByTab(currentCampaignsCache, 'archived').length;
     document.getElementById('countAll').textContent = currentCampaignsCache.length;
@@ -706,6 +764,22 @@
       const createdDate = c.created_at ? new Date(c.created_at).toLocaleDateString() : '—';
       const beneficiaryCell = beneficiaryStatusCellHtml(beneficiarySummaries[c.id]);
 
+      // Pending/rejected campaigns get Approve/Reject actions instead of
+      // Archive/Reactivate — "Approve" and "Reject" are just the same
+      // existing PATCH ?id= endpoint with status: 'active' / 'rejected',
+      // reusing it rather than adding a separate approve/reject endpoint.
+      let statusActionsHtml;
+      if (c.status === 'pending') {
+        statusActionsHtml = `
+          <button onclick="approveCampaign(${c.id}, '${escapeJs(c.patient_name)}')">Approve</button>
+          <button class="danger" onclick="rejectCampaign(${c.id}, '${escapeJs(c.patient_name)}')">Reject</button>
+        `;
+      } else if (c.status === 'rejected') {
+        statusActionsHtml = `<button onclick="approveCampaign(${c.id}, '${escapeJs(c.patient_name)}')">Approve</button>`;
+      } else {
+        statusActionsHtml = `<button onclick="toggleArchive(${c.id}, '${c.status}')">${c.status === 'active' ? 'Archive' : 'Reactivate'}</button>`;
+      }
+
       return `
       <tr>
         <td class="name-cell">
@@ -725,7 +799,7 @@
           <div class="row-actions">
             <button onclick="openEditModal(${c.id})">Edit</button>
             <button onclick="openBeneficiaryModal(${c.id}, '${escapeJs(c.patient_name)}')">Beneficiary</button>
-            <button onclick="toggleArchive(${c.id}, '${c.status}')">${c.status === 'active' ? 'Archive' : 'Reactivate'}</button>
+            ${statusActionsHtml}
             <button class="danger" onclick="deleteCampaign(${c.id}, '${escapeJs(c.patient_name)}')">Delete</button>
           </div>
         </td>
@@ -795,6 +869,17 @@
     document.getElementById('phoneNumberError').style.display = 'none';
     // Primary phone number is required for brand-new campaigns.
     document.getElementById('phoneRequiredMark').style.display = 'inline';
+
+    // The beneficiary/payout section only makes sense when creating a
+    // brand-new campaign — reset it and show it.
+    document.getElementById('newCampaignBeneficiarySection').style.display = 'block';
+    document.getElementById('newBenefName').value = '';
+    document.getElementById('newBenefBankSearch').value = '';
+    document.getElementById('newBenefBankCode').value = '';
+    document.getElementById('newBenefBankName').value = '';
+    document.getElementById('newBenefAccountNumber').value = '';
+    document.getElementById('newBenefBankResults').classList.remove('open');
+
     modalOverlay.classList.add('open');
   }
 
@@ -822,6 +907,12 @@
     // an existing campaign without one must stay editable, so we don't
     // show the "required" marker (or enforce it) here.
     document.getElementById('phoneRequiredMark').style.display = 'none';
+
+    // Beneficiary details for an EXISTING campaign are managed through
+    // the dedicated "Beneficiary" button/modal instead (it also handles
+    // Verify/Enable Settlement), so this creation-only section is
+    // hidden while editing.
+    document.getElementById('newCampaignBeneficiarySection').style.display = 'none';
 
     uploadedImageUrl = campaign.image_url || null;
     if (uploadedImageUrl) {
@@ -855,6 +946,55 @@
         return;
       }
       if (data.warning) alert(data.warning);
+      loadCampaigns(searchInput.value.trim());
+      loadAnalytics();
+    } catch (err) {
+      console.error(err);
+      alert('Something went wrong.');
+    }
+  };
+
+  // Approve/Reject a visitor-submitted campaign — this is just the same
+  // existing PATCH ?id= endpoint used for archive/reactivate, with
+  // status set to 'active' or 'rejected'. Approving does NOT touch the
+  // beneficiary at all — it stays exactly as it was (still 'pending'
+  // verification, settlement still disabled, no subaccount) until an
+  // admin separately verifies it via the "Beneficiary" button, exactly
+  // like any other campaign's beneficiary.
+  window.approveCampaign = async function (id, patientName) {
+    if (!confirm(`Approve ${patientName}'s campaign? It will immediately become visible on the public homepage.`)) return;
+    try {
+      const res = await fetch(`/api/admin/campaigns?id=${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: 'active' }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        alert(data.error || 'Failed to approve campaign.');
+        return;
+      }
+      loadCampaigns(searchInput.value.trim());
+      loadAnalytics();
+    } catch (err) {
+      console.error(err);
+      alert('Something went wrong.');
+    }
+  };
+
+  window.rejectCampaign = async function (id, patientName) {
+    if (!confirm(`Reject ${patientName}'s submission? It will not be published.`)) return;
+    try {
+      const res = await fetch(`/api/admin/campaigns?id=${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: 'rejected' }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        alert(data.error || 'Failed to reject campaign.');
+        return;
+      }
       loadCampaigns(searchInput.value.trim());
       loadAnalytics();
     } catch (err) {
@@ -949,6 +1089,18 @@
       secondary_phone_number: document.getElementById('secondaryPhoneNumber').value.trim(),
     };
 
+    // Beneficiary/payout fields only apply when creating a brand-new
+    // campaign (the section itself is hidden while editing, see
+    // openEditModal above) — they're REQUIRED for every new campaign,
+    // exactly like the public visitor submission form already requires
+    // them, so a campaign can never be created without a beneficiary.
+    if (!id) {
+      payload.beneficiary_name = document.getElementById('newBenefName').value.trim();
+      payload.bank_code = document.getElementById('newBenefBankCode').value;
+      payload.bank_name = document.getElementById('newBenefBankName').value;
+      payload.account_number = document.getElementById('newBenefAccountNumber').value.trim();
+    }
+
     if (!payload.patient_name) {
       formError.textContent = 'Patient name is required.';
       return;
@@ -965,6 +1117,17 @@
       phoneNumberError.textContent = 'A primary contact phone number is required for new campaigns.';
       phoneNumberError.style.display = 'block';
       document.getElementById('phoneNumber').focus();
+      return;
+    }
+    // Beneficiary name, bank, and account number are all REQUIRED when
+    // creating a new campaign — a campaign and its beneficiary are
+    // always created together. bank_code specifically only gets set
+    // once a search result is actually clicked (see setupBankCombobox),
+    // so checking it here also catches "typed something but never
+    // picked a bank from the list" as a validation error, not just a
+    // blank field.
+    if (!id && (!payload.beneficiary_name || !payload.bank_code || !payload.account_number)) {
+      formError.textContent = 'Beneficiary name, bank, and account number are all required to create a campaign.';
       return;
     }
 
@@ -1046,6 +1209,62 @@
       select.innerHTML = '<option value="">Could not load banks</option>';
     }
   }
+
+  // Reusable searchable bank combobox: filters the SAME bankListCache
+  // used by the standalone Beneficiary modal's plain <select> above —
+  // only one bank list is ever fetched — and gives a type-to-search UI
+  // over it, so "GT..." narrows down to GTBank etc. as the admin types.
+  function setupBankCombobox(searchInputId, hiddenCodeId, hiddenNameId, resultsId) {
+    const searchInput = document.getElementById(searchInputId);
+    const hiddenCode = document.getElementById(hiddenCodeId);
+    const hiddenName = document.getElementById(hiddenNameId);
+    const resultsEl = document.getElementById(resultsId);
+    if (!searchInput) return;
+
+    searchInput.addEventListener('input', () => {
+      // Typing again means any previous selection no longer applies —
+      // the admin must pick a fresh result before the bank is
+      // considered "selected" again.
+      hiddenCode.value = '';
+      hiddenName.value = '';
+
+      const query = searchInput.value.trim().toLowerCase();
+      if (!query) {
+        resultsEl.classList.remove('open');
+        resultsEl.innerHTML = '';
+        return;
+      }
+
+      const matches = bankListCache.filter((b) => b.name.toLowerCase().includes(query)).slice(0, 8);
+      if (matches.length === 0) {
+        resultsEl.innerHTML = '<div class="bank-result-empty">No matching banks found.</div>';
+        resultsEl.classList.add('open');
+        return;
+      }
+
+      resultsEl.innerHTML = matches
+        .map((b) => `<div class="bank-result-item" data-code="${escapeHtml(b.code)}" data-name="${escapeHtml(b.name)}">${escapeHtml(b.name)}</div>`)
+        .join('');
+      resultsEl.classList.add('open');
+    });
+
+    resultsEl.addEventListener('click', (e) => {
+      const item = e.target.closest('.bank-result-item');
+      if (!item || !item.dataset.code) return;
+      hiddenCode.value = item.dataset.code;
+      hiddenName.value = item.dataset.name;
+      searchInput.value = item.dataset.name;
+      resultsEl.classList.remove('open');
+      resultsEl.innerHTML = '';
+    });
+
+    document.addEventListener('click', (e) => {
+      if (!resultsEl.contains(e.target) && e.target !== searchInput) {
+        resultsEl.classList.remove('open');
+      }
+    });
+  }
+  setupBankCombobox('newBenefBankSearch', 'newBenefBankCode', 'newBenefBankName', 'newBenefBankResults');
 
   window.openBeneficiaryModal = async function (fundraiserId, patientName) {
     document.getElementById('beneficiaryModalTitle').textContent = `Beneficiary — ${patientName}`;
