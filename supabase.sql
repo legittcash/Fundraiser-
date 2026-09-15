@@ -511,3 +511,34 @@ revoke all on function record_donation_and_update_totals(
 grant execute on function record_donation_and_update_totals(
   bigint, text, numeric, numeric, numeric, numeric, text, text, boolean, text
 ) to service_role;
+
+-- =========================================================================
+-- VISITOR CAMPAIGN SUBMISSIONS — widen the allowed campaign statuses
+-- =========================================================================
+-- 18. Visitor-submitted campaigns (api/submit-campaign.js) start life as
+-- 'pending' — not publicly visible, not accepting donations — until an
+-- admin reviews and either approves (-> 'active') or rejects
+-- (-> 'rejected') them. The status column already existed; only the
+-- CHECK constraint restricting its allowed values needed widening. This
+-- is the ONLY schema change this feature required — the "beneficiaries"
+-- table already fully supports a not-yet-verified beneficiary via its
+-- existing column defaults (verification_status defaults to 'pending',
+-- settlement_enabled defaults to false, paystack_subaccount_code
+-- defaults to null), so nothing there needed to change at all.
+--
+-- Safe to re-run: drops the old constraint only if it exists, then adds
+-- the widened one. Every existing row's current status ('active' or
+-- 'archived') remains valid under the new, larger set of allowed
+-- values, so no existing data is affected.
+do $$
+begin
+  if exists (
+    select 1 from pg_constraint where conname = 'fundraiser_status_check'
+  ) then
+    alter table fundraiser drop constraint fundraiser_status_check;
+  end if;
+
+  alter table fundraiser
+    add constraint fundraiser_status_check
+    check (status in ('active', 'archived', 'pending', 'rejected'));
+end $$;
