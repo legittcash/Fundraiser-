@@ -370,10 +370,42 @@
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });
-      const data = await res.json();
+
+      // Read the body as raw text FIRST, then try to parse it as JSON.
+      // A Vercel-level failure (function crash, timeout, bad deployment,
+      // etc.) can return a plain-text or HTML error page instead of
+      // JSON — calling res.json() directly on that throws and used to
+      // get swallowed by the outer catch below, hiding the real cause
+      // behind the same generic "Something went wrong" message shown
+      // for an ordinary network failure. Parsing safely here means a
+      // non-JSON response is now reported honestly, with its real HTTP
+      // status and body.
+      const rawText = await res.text();
+      let data = null;
+      let parseError = null;
+      try {
+        data = rawText ? JSON.parse(rawText) : {};
+      } catch (err) {
+        parseError = err;
+      }
+
+      if (parseError) {
+        console.error('Non-JSON response from /api/submit-campaign:', {
+          status: res.status,
+          statusText: res.statusText,
+          body: rawText,
+        });
+        formError.textContent = `Server error (HTTP ${res.status}). ${
+          rawText ? rawText.slice(0, 300) : 'The server did not return a valid response. Please try again or contact support.'
+        }`;
+        submitBtn.disabled = false;
+        submitBtn.textContent = 'Submit for Review';
+        return;
+      }
 
       if (!res.ok) {
-        formError.textContent = data.error || 'Something went wrong. Please try again.';
+        console.error('Submission rejected:', { status: res.status, body: data });
+        formError.textContent = data.error || `Something went wrong (HTTP ${res.status}). Please try again.`;
         submitBtn.disabled = false;
         submitBtn.textContent = 'Submit for Review';
         return;
@@ -383,8 +415,12 @@
       document.getElementById('successMessage').textContent = data.message || 'Your campaign has been submitted and is pending review.';
       document.getElementById('successCard').style.display = 'block';
     } catch (err) {
-      console.error(err);
-      formError.textContent = 'Something went wrong. Please try again.';
+      // This catch is now reached only by genuine network-level failures
+      // (request never reached the server, connection dropped, etc.) —
+      // not by a non-JSON or non-OK response, both of which are handled
+      // above with their real status/body surfaced.
+      console.error('Network error submitting campaign:', err);
+      formError.textContent = `Could not reach the server (${err.message || 'network error'}). Please check your connection and try again.`;
       submitBtn.disabled = false;
       submitBtn.textContent = 'Submit for Review';
     }
