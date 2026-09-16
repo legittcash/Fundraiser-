@@ -578,6 +578,82 @@ Keep `ADMIN_PASSWORD` and `ADMIN_SESSION_SECRET` long and unique.
 
 ---
 
+## Visitor campaign submission diagnostics (this update)
+
+The visitor-facing "Start a Fundraiser" flow was failing with a generic
+"Something went wrong. Please try again." on the submission form, and
+Pending Review stayed at zero because no submission was ever actually
+being created. This update adds diagnostics to find out *why* without
+changing any of the actual submission logic (validation rules,
+beneficiary requirements, rollback triggers). **Files changed:
+`submit-campaign.html` and `api/submit-campaign.js`.** `lib/beneficiary.js`
+and `lib/campaign-images.js` were inspected and needed no changes.
+
+### `submit-campaign.html`
+- **Root cause of the *symptom*:** the submit handler called `const data
+  = await res.json()` directly on the fetch response. If the server ever
+  returns something that isn't valid JSON — a Vercel platform error page,
+  a function crash, a timeout — `res.json()` throws, that throw was
+  caught by the outer `catch`, and the visitor saw the exact same generic
+  "Something went wrong" message as a plain network failure, with the
+  real HTTP status and body thrown away. This hid whatever the actual
+  server-side failure was.
+- Fixed by reading the response as text first, then attempting to parse
+  it as JSON:
+  - **Non-JSON response** → logs the HTTP status and raw body to the
+    console, and shows the visitor the real HTTP status plus the first
+    300 characters of the server's response, instead of a generic
+    message.
+  - **JSON response, but `!res.ok`** → logs the status and parsed body,
+    and shows `data.error` (the server's own message) as before.
+  - **Genuine network failure** (request never reached the server) →
+    still caught by the outer `catch`, now with its own distinct message
+    (`Could not reach the server (...)`) so it's never confused with a
+    server-side failure again.
+
+### `api/submit-campaign.js`
+- **Stage-labeled logging.** Every failure path now logs through a
+  `logStage(stage, message, details)` helper tagged `validation`, `image
+  upload`, `fundraiser insert`, `rollback`, or `beneficiary insert`, so
+  Vercel's function logs make it immediately obvious which of the four
+  stages a given submission failed at, with the *actual* Supabase
+  response body attached where relevant (previously only the fundraiser
+  insert's final failure logged the raw error; beneficiary-insert
+  failures, image-upload failures, and all validation rejections were
+  either unlogged or logged without the real response body).
+- **Safe diagnostic error responses.** The fundraiser-insert and
+  beneficiary-insert failure responses no longer just say "Something
+  went wrong..." with nothing else — each now also returns a short
+  `reference` code (e.g. `a1b2c3d4`) that's logged server-side right next
+  to the full Supabase error (`ref=a1b2c3d4 ...`), so a developer can
+  grep the logs for the exact failure a visitor is asking about. The raw
+  Supabase error text is still **never** sent to the browser — this is a
+  public, unauthenticated endpoint, and that text can contain internal
+  column/constraint names that shouldn't be exposed.
+- **Beneficiary payload verified against the schema (item D).** Checked
+  `lib/beneficiary.js`'s insert payload — `fundraiser_id`,
+  `beneficiary_name`, `bank_name`, `bank_code`, `account_number`,
+  `primary_phone_number`, `secondary_phone_number`, `settlement_percentage`
+  — against the `beneficiaries` table in `supabase.sql`: every field
+  matches an existing column exactly, so no payload/schema mismatch was
+  found here. `api/submit-campaign.js`'s call site passes the same
+  fields through correctly.
+- **Rollback correctness fixed (item E).** The old `rollbackCampaign()`
+  called `fetch(...DELETE...)` and only logged if that `fetch()` itself
+  *threw* — but `fetch()` only throws on a genuine network error, not on
+  an HTTP error status. A rollback that failed at the HTTP level (e.g.
+  the delete request itself returning 403/500) was silently treated as
+  successful, which could leave a `pending` fundraiser row in the
+  database with no beneficiary and no record that cleanup had failed.
+  `rollbackCampaign()` now checks `response.ok` explicitly, logs the real
+  outcome either way (`ref=... ROLLBACK DID NOT SUCCEED — fundraiser N is
+  still in the database...` when it fails), and returns that outcome to
+  the caller.
+
+None of these changes touch `lib/beneficiary.js`, `lib/campaign-images.js`,
+`supabase.sql`, the public campaign/donor APIs, Paystack logic, or any
+admin-only functionality.
+
 ## Admin dashboard data-loading fixes (this update)
 
 This update fixed a set of real bugs found during a careful inspection of
