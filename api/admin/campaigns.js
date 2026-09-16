@@ -161,15 +161,76 @@ async function handleAnalytics(req, res, { SUPABASE_URL, SUPABASE_SERVICE_ROLE_K
       console.error('Supabase error fetching donation financials:', await financialsRes.text());
     }
 
+    // The nested `fundraiser:fundraiser_id(patient_name)` embed relies on
+    // PostgREST correctly recognizing the donations -> fundraiser foreign
+    // key relationship. That embed can fail on its own (e.g. after a
+    // schema-cache reload, an ambiguous relationship name, or a transient
+    // PostgREST hiccup) even when the plain "donations" table is perfectly
+    // queryable. Rather than let a failure here take down the WHOLE
+    // analytics endpoint (which also returns totals used elsewhere on the
+    // dashboard), we fall back to fetching donations and fundraiser names
+    // as two separate, simpler requests and merging them in JS.
+    let recentDonations = [];
     const recentRes = await fetch(
       `${SUPABASE_URL}/rest/v1/donations?select=id,amount,paystack_fee,platform_fee,net_amount,donor_name,donor_email,anonymous,created_at,fundraiser:fundraiser_id(patient_name)&order=created_at.desc&limit=10`,
       { headers }
     );
-    let recentDonations = [];
+
     if (recentRes.ok) {
       recentDonations = await recentRes.json();
     } else {
-      console.error('Supabase error fetching recent donations:', await recentRes.text());
+      console.error(
+        'Supabase error fetching recent donations with the nested fundraiser embed — falling back to a separate patient-name lookup:',
+        await recentRes.text()
+      );
+
+      // ---- SAFE FALLBACK ----
+      // 1) Fetch recent donations WITHOUT the nested relationship.
+      const fallbackRes = await fetch(
+        `${SUPABASE_URL}/rest/v1/donations?select=id,amount,paystack_fee,platform_fee,net_amount,donor_name,donor_email,anonymous,created_at,fundraiser_id&order=created_at.desc&limit=10`,
+        { headers }
+      );
+
+      if (!fallbackRes.ok) {
+        // Both the embedded query AND the plain fallback query failed —
+        // something is actually wrong with the donations table/connection,
+        // not just the embed. Log it and continue with an empty list
+        // rather than failing the whole analytics endpoint.
+        console.error('Supabase error fetching recent donations (fallback also failed):', await fallbackRes.text());
+      } else {
+        const donations = await fallbackRes.json();
+
+        // 2) Collect the distinct fundraiser_id values referenced by
+        // these donations.
+        const fundraiserIds = [...new Set(donations.map((d) => d.fundraiser_id).filter((id) => id != null))];
+
+        // 3) Fetch matching fundraiser patient names separately.
+        let patientNameById = {};
+        if (fundraiserIds.length > 0) {
+          const fundraisersRes = await fetch(
+            `${SUPABASE_URL}/rest/v1/fundraiser?select=id,patient_name&id=in.(${fundraiserIds.join(',')})`,
+            { headers }
+          );
+          if (fundraisersRes.ok) {
+            const fundraisers = await fundraisersRes.json();
+            patientNameById = Object.fromEntries(fundraisers.map((f) => [f.id, f.patient_name]));
+          } else {
+            console.error(
+              'Supabase error fetching fundraiser patient names for the recent-donations fallback:',
+              await fundraisersRes.text()
+            );
+          }
+        }
+
+        // 4) Merge patient_name back in, in the same shape the nested
+        // embed would have produced (donation.fundraiser.patient_name),
+        // so the admin dashboard's renderDonations() doesn't need to
+        // know which path was taken.
+        recentDonations = donations.map((d) => ({
+          ...d,
+          fundraiser: { patient_name: patientNameById[d.fundraiser_id] ?? null },
+        }));
+      }
     }
 
     return res.status(200).json({
@@ -408,9 +469,6 @@ export default async function handler(req, res) {
       }
 
       return res.status(201).json({ campaign: newCampaignRecord, beneficiary: beneficiaryResult.data });
-    }
-
-      return res.status(201).json({ campaign: newCampaignRecord });
     }
 
     // ---------------------------------------------------------------
