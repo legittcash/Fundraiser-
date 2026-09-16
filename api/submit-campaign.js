@@ -73,21 +73,76 @@ function generateSlug(patientName) {
   return `${base || 'patient'}-${randomSuffix}`;
 }
 
-async function rollbackCampaign(SUPABASE_URL, headers, campaignId, imageUrl) {
-  try {
-    await fetch(`${SUPABASE_URL}/rest/v1/fundraiser?id=eq.${campaignId}`, { method: 'DELETE', headers });
-  } catch (err) {
-    console.error(`Failed to roll back pending campaign ${campaignId}:`, err);
+// Short, non-sensitive reference code included in error responses so a
+// visitor can quote it to support, and an admin can grep Vercel's logs
+// for the matching `[submit-campaign:...] ref=<code>` line to see the
+// FULL diagnostic detail (including the raw Supabase error text) —
+// without ever putting that raw detail into the public HTTP response
+// itself, which could otherwise leak internal schema/query details.
+function makeErrorRef() {
+  return crypto.randomBytes(4).toString('hex');
+}
+
+// Uniform stage-labeled logger, per the four stages this endpoint can
+// fail at: validation, image upload, fundraiser insert, beneficiary
+// insert. Always goes to console.error (visible in Vercel's function
+// logs) so failures at every stage are easy to find, not just the ones
+// that already happened to log something.
+function logStage(stage, message, details) {
+  if (details !== undefined) {
+    console.error(`[submit-campaign:${stage}] ${message}`, details);
+  } else {
+    console.error(`[submit-campaign:${stage}] ${message}`);
   }
-  if (imageUrl) {
+}
+
+// Rolls back a just-created 'pending' campaign after its beneficiary
+// failed to save. IMPORTANT: fetch() only rejects on a genuine network
+// error — an HTTP error status (403, 500, etc.) comes back as a normal
+// resolved response with response.ok === false. The previous version of
+// this function never checked response.ok, so a rollback that failed at
+// the HTTP level (as opposed to a thrown network error) was silently
+// treated as if it had succeeded, potentially leaving an orphaned
+// 'pending' campaign behind with no beneficiary and no record that
+// cleanup had failed. This version checks response.ok explicitly and
+// reports the real outcome.
+async function rollbackCampaign(SUPABASE_URL, headers, campaignId, imageUrl, ref) {
+  let campaignDeleted = false;
+  try {
+    const deleteRes = await fetch(`${SUPABASE_URL}/rest/v1/fundraiser?id=eq.${campaignId}`, {
+      method: 'DELETE',
+      headers,
+    });
+    if (deleteRes.ok) {
+      campaignDeleted = true;
+    } else {
+      const errText = await deleteRes.text();
+      logStage(
+        'rollback',
+        `ref=${ref} Failed to roll back pending campaign ${campaignId} after its beneficiary failed to save — HTTP ${deleteRes.status}. This campaign row is now ORPHANED (no beneficiary) and needs manual cleanup in Supabase.`,
+        errText
+      );
+    }
+  } catch (err) {
+    logStage(
+      'rollback',
+      `ref=${ref} Network error rolling back pending campaign ${campaignId}. This campaign row may now be ORPHANED (no beneficiary) and needs manual cleanup in Supabase.`,
+      err.message || String(err)
+    );
+  }
+
+  if (campaignDeleted && imageUrl) {
     const cleanup = await deleteCampaignImage(imageUrl);
     if (!cleanup.skipped && !cleanup.deleted) {
-      console.error(
-        `Rolled-back submission's photo could not be removed from storage. Manual cleanup needed ` +
-          `in Supabase Storage (bucket "campaign-images"): ${imageUrl}. Storage error: ${cleanup.error}`
+      logStage(
+        'rollback',
+        `ref=${ref} Campaign ${campaignId} was rolled back, but its photo could not be removed from storage. Manual cleanup needed in Supabase Storage (bucket "campaign-images"): ${imageUrl}.`,
+        cleanup.error
       );
     }
   }
+
+  return { campaignDeleted };
 }
 
 export default async function handler(req, res) {
@@ -106,15 +161,20 @@ export default async function handler(req, res) {
 
   // ---- Validate campaign fields ----
   const patientName = (body.patient_name || '').trim();
-  if (!patientName) return res.status(400).json({ error: 'Patient name is required.' });
+  if (!patientName) {
+    logStage('validation', 'Rejected — missing patient_name.');
+    return res.status(400).json({ error: 'Patient name is required.' });
+  }
 
   const goalAmount = Number(body.goal_amount);
   if (!Number.isFinite(goalAmount) || goalAmount <= 0) {
+    logStage('validation', 'Rejected — invalid goal_amount.', body.goal_amount);
     return res.status(400).json({ error: 'A valid fundraising goal is required.' });
   }
 
   const phoneNumber = (body.phone_number || '').trim();
   if (!phoneNumber) {
+    logStage('validation', 'Rejected — missing phone_number.');
     return res.status(400).json({ error: 'A primary contact phone number is required.' });
   }
   const secondaryPhoneNumber = (body.secondary_phone_number || '').trim() || null;
@@ -127,6 +187,11 @@ export default async function handler(req, res) {
   const bankCode = body.bank_code;
   const accountNumber = (body.account_number || '').trim();
   if (!beneficiaryName || !bankCode || !accountNumber) {
+    logStage('validation', 'Rejected — missing beneficiary_name, bank_code, or account_number.', {
+      hasBeneficiaryName: !!beneficiaryName,
+      hasBankCode: !!bankCode,
+      hasAccountNumber: !!accountNumber,
+    });
     return res.status(400).json({
       error: 'Beneficiary name, bank, and account number are all required so the campaign can be reviewed.',
     });
@@ -137,6 +202,7 @@ export default async function handler(req, res) {
   if (body.fileBase64 && body.contentType) {
     const uploadResult = await uploadCampaignImage(body.fileBase64, body.contentType);
     if (!uploadResult.ok) {
+      logStage('image upload', `Failed — HTTP ${uploadResult.status || 500}.`, uploadResult.error);
       return res.status(uploadResult.status || 500).json({ error: uploadResult.error });
     }
     imageUrl = uploadResult.url;
@@ -176,27 +242,40 @@ export default async function handler(req, res) {
 
     lastErrorText = await response.text();
     const isSlugCollision = lastErrorText.includes('fundraiser_slug_key') || lastErrorText.includes('23505');
-    console.warn(
-      `Visitor submission insert attempt ${attempt}/${MAX_SLUG_ATTEMPTS} failed` +
-        (isSlugCollision ? ' due to a slug collision — retrying with a new slug.' : '.'),
+    logStage(
+      'fundraiser insert',
+      `Attempt ${attempt}/${MAX_SLUG_ATTEMPTS} failed — HTTP ${response.status}` +
+        (isSlugCollision ? ' (slug collision — retrying with a new slug).' : '.'),
       lastErrorText
     );
     if (!isSlugCollision) break;
   }
 
   if (!created) {
-    console.error('Failed to create visitor-submitted campaign after retries:', lastErrorText);
+    const ref = makeErrorRef();
+    logStage(
+      'fundraiser insert',
+      `ref=${ref} Failed to create visitor-submitted campaign after ${MAX_SLUG_ATTEMPTS} attempt(s). Full Supabase response body follows.`,
+      lastErrorText
+    );
     if (imageUrl) {
       const cleanup = await deleteCampaignImage(imageUrl);
       if (!cleanup.skipped && !cleanup.deleted) {
-        console.error(
-          `Visitor submission failed AND its uploaded photo could not be rolled back automatically. ` +
-            `Manual cleanup needed in Supabase Storage (bucket "campaign-images"): ${imageUrl}. ` +
-            `Storage error: ${cleanup.error}`
+        logStage(
+          'fundraiser insert',
+          `ref=${ref} Visitor submission failed AND its uploaded photo could not be rolled back automatically. Manual cleanup needed in Supabase Storage (bucket "campaign-images"): ${imageUrl}.`,
+          cleanup.error
         );
       }
     }
-    return res.status(500).json({ error: 'Something went wrong saving your submission. Please try again.' });
+    // Don't send the raw Supabase error text to a public, unauthenticated
+    // caller — it can contain internal column/constraint names. Send a
+    // safe reference code instead; the full detail is in the server log
+    // line above (`ref=${ref}`) for a developer/admin to look up.
+    return res.status(500).json({
+      error: 'Something went wrong saving your submission. Please try again, or contact support with the reference code below.',
+      reference: ref,
+    });
   }
 
   const campaign = created[0];
@@ -217,9 +296,26 @@ export default async function handler(req, res) {
   );
 
   if (!beneficiaryResult.ok) {
-    console.error('Failed to create beneficiary for visitor submission, rolling back campaign:', beneficiaryResult.error);
-    await rollbackCampaign(SUPABASE_URL, headers, campaign.id, imageUrl);
-    return res.status(500).json({ error: 'Something went wrong saving your payout details. Please try again.' });
+    const ref = makeErrorRef();
+    logStage(
+      'beneficiary insert',
+      `ref=${ref} Failed to create beneficiary for fundraiser ${campaign.id} — rolling back the campaign. Full Supabase response body follows.`,
+      beneficiaryResult.error
+    );
+    const rollbackOutcome = await rollbackCampaign(SUPABASE_URL, headers, campaign.id, imageUrl, ref);
+    if (!rollbackOutcome.campaignDeleted) {
+      logStage(
+        'beneficiary insert',
+        `ref=${ref} ROLLBACK DID NOT SUCCEED — fundraiser ${campaign.id} is still in the database with no beneficiary and needs manual review/cleanup.`
+      );
+    }
+    // Same reasoning as the fundraiser-insert failure above: a safe
+    // reference code goes to the visitor, the raw Supabase error and the
+    // rollback outcome are both in the server log next to `ref=${ref}`.
+    return res.status(500).json({
+      error: 'Something went wrong saving your payout details. Please try again, or contact support with the reference code below.',
+      reference: ref,
+    });
   }
 
   return res.status(201).json({
