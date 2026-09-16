@@ -200,6 +200,29 @@ export default async function handler(req, res) {
   // ---- Optional photo upload ----
   let imageUrl = null;
   if (body.fileBase64 && body.contentType) {
+    // Defensive guard against exactly the failure mode reported in
+    // production (TypeError: uploadCampaignImage is not a function).
+    // Source-level inspection confirms lib/campaign-images.js DOES
+    // export a callable uploadCampaignImage — api/admin/campaigns.js
+    // imports the same function from the same file the same way, and
+    // that path is confirmed working — so this should never actually
+    // trip. It exists so that IF a future refactor ever breaks this
+    // export, or a stale/partial deployment ever serves a build without
+    // it, the failure is a clear, logged, diagnosable 500 instead of an
+    // unhandled TypeError crashing the function with no context.
+    if (typeof uploadCampaignImage !== 'function') {
+      const ref = makeErrorRef();
+      logStage(
+        'image upload',
+        `ref=${ref} uploadCampaignImage is not available as a function (got: ${typeof uploadCampaignImage}). ` +
+          `This points to a stale/partial deployment of lib/campaign-images.js — redeploy with the build cache cleared.`
+      );
+      return res.status(500).json({
+        error: 'Photo upload is temporarily unavailable. Please try again without a photo, or contact support with the reference code below.',
+        reference: ref,
+      });
+    }
+
     const uploadResult = await uploadCampaignImage(body.fileBase64, body.contentType);
     if (!uploadResult.ok) {
       logStage('image upload', `Failed — HTTP ${uploadResult.status || 500}.`, uploadResult.error);
