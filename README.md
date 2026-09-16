@@ -578,6 +578,56 @@ Keep `ADMIN_PASSWORD` and `ADMIN_SESSION_SECRET` long and unique.
 
 ---
 
+## Investigating the reported `uploadCampaignImage is not a function` crash
+
+A production Vercel log reported `TypeError: (0, _campaignImages.uploadCampaignImage) is not a
+function` at `api/submit-campaign.js:203:51`, described as an
+import/export name mismatch between `api/submit-campaign.js` and
+`lib/campaign-images.js`. **File changed: `api/submit-campaign.js`.**
+`lib/campaign-images.js` was inspected and left unchanged.
+
+**What inspection actually found:** there is no name mismatch in the
+source.
+- `lib/campaign-images.js` exports `uploadCampaignImage` as a named
+  `export async function` (confirmed by reading the file and by
+  dynamically importing the module in Node and checking
+  `typeof mod.uploadCampaignImage === 'function'`).
+- `api/submit-campaign.js` imports it with that exact name
+  (`import { uploadCampaignImage, deleteCampaignImage } from
+  '../lib/campaign-images.js'`) and calls it correctly.
+- `api/admin/campaigns.js` imports the **same function from the same
+  file the same way**, and that path is already confirmed working —
+  which wouldn't be possible if the export were genuinely missing or
+  misnamed.
+
+Given that, the most likely explanation for the reported crash is a
+**stale or partial Vercel build/deployment** — a cached bundle of
+`lib/campaign-images.js` from before `uploadCampaignImage` existed,
+serving for that one function. **Recommended next step: trigger a fresh
+Vercel deployment with the build cache cleared** (Deployments →
+Redeploy → uncheck "Use existing Build Cache"). This is an infra step,
+not a code change, so it isn't something this update can perform.
+
+Rather than invent a code change for a mismatch that isn't actually
+present — and per the instruction not to create a duplicate image-upload
+implementation — `api/submit-campaign.js` was instead hardened against
+this specific failure *class*, so that if it (or something like it) ever
+does happen again — a future refactor breaking the export, or another
+stale deployment — it fails safely instead of crashing:
+- Before calling `uploadCampaignImage()`, the code now checks
+  `typeof uploadCampaignImage === 'function'`. If that's ever false, it
+  logs a clear, stage-labeled diagnostic (`[submit-campaign:image
+  upload] ref=... uploadCampaignImage is not available...`) explaining
+  the likely cause, and returns a clean `500` with a safe message and
+  reference code — instead of an unhandled `TypeError` with a bare stack
+  trace.
+- The existing image-upload success path, error handling, and
+  cleanup/rollback behavior are all unchanged.
+
+No duplicate image-upload implementation was added, `lib/campaign-images.js`
+was not modified, and neither Supabase SQL, Paystack logic, nor the
+admin dashboard were touched.
+
 ## Visitor campaign submission diagnostics (this update)
 
 The visitor-facing "Start a Fundraiser" flow was failing with a generic
