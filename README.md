@@ -62,10 +62,11 @@ Built with plain HTML/CSS/JS, Vercel Serverless Functions, and Supabase.
 **Admin dashboard** (`admin/login.html` → `admin/dashboard.html`)
 1. Log in with a username/password stored as Vercel environment
    variables — never in the database.
-2. Four tabs — **Active**, **Goal Achieved**, **Archived**, **All** —
-   over the same campaign list, each with a live count. "Goal Achieved"
-   is based purely on `raised_amount >= goal_amount`, entirely
-   independent of a campaign's archived/active status.
+2. Six tabs — **Active**, **Pending Review**, **Goal Achieved**,
+   **Archived**, **Rejected**, **All** — over the same campaign list,
+   each with a live count. "Goal Achieved" is based purely on
+   `raised_amount >= goal_amount`, entirely independent of a campaign's
+   archived/active status.
 3. Create, edit, archive, or delete campaigns, with private phone
    numbers, image upload, and safe image lifecycle (rollback on failed
    creation, safe replacement, cleanup on delete) — all unchanged.
@@ -451,33 +452,46 @@ few seconds later the totals and Recent Donors list update.
 > related admin operations into fewer, router-style files — using a
 > `?route=` or `?action=` query parameter to pick which section of the
 > file handles a given request — to stay comfortably under that limit
-> (**9 functions total**) while keeping every feature working exactly as
-> before. This is purely a file-organization choice; none of the
+> (**10 functions total**) while keeping every feature working exactly
+> as before. This is purely a file-organization choice; none of the
 > underlying logic changed.
 
 ```
 patient-fundraiser/
-├── index.html                      # Public homepage: Jiji-style campaign cards, search
+├── index.html                      # Public homepage: Jiji-style campaign cards, search,
+│                                    # "+ Start a Fundraiser" button
 ├── campaign.html                   # Public campaign details page — donate button calls
 │                                    # /api/initialize-donation and redirects to Paystack's
 │                                    # hosted checkout (no PaystackPop / public key used here anymore)
+├── submit-campaign.html            # Public visitor campaign submission form — patient info
+│                                    # + beneficiary/payout info, with a searchable bank field
 ├── admin/
 │   ├── login.html                    # Admin login form
-│   └── dashboard.html                # Campaigns (4 tabs), analytics, beneficiary/settlement UI,
-│                                      # Platform Fee master switch
+│   └── dashboard.html                # Campaigns (6 tabs incl. Pending Review and Rejected),
+│                                      # analytics, combined campaign+beneficiary creation form,
+│                                      # beneficiary/settlement UI, Platform Fee master switch
 ├── images/
 │   └── lucy.jpg                      # Fallback image used if a campaign has no photo
 ├── lib/
 │   ├── admin-auth.js                  # Shared login-session helper used by admin APIs
-│   ├── campaign-images.js             # Shared helper: safely delete/roll back campaign photos in Storage
+│   ├── campaign-images.js             # Shared helper: upload/delete campaign photos in Storage
+│   │                                   # (used by both the admin upload route and the public
+│   │                                   # visitor submission endpoint)
+│   ├── beneficiary.js                 # Shared helper: insert a brand-new beneficiary row,
+│   │                                   # used by both the admin combined creation form and
+│   │                                   # the public visitor submission endpoint — always starts
+│   │                                   # fully inert (pending/disabled/no subaccount)
 │   └── paystack.js                    # Shared helper: List Banks / Resolve Account / Create & Update
 │                                       # Subaccount / Initialize Transaction (server-side checkout)
-├── api/                              # 9 files total = 9 Vercel Serverless Functions
+├── api/                              # 10 files total = 10 Vercel Serverless Functions
 │   ├── campaigns.js                   # Public: list active campaigns (+ search) — explicit column list
 │   ├── campaign.js                    # Public: fetch one campaign by slug — explicit column list,
 │   │                                   # NEVER returns anything about beneficiaries/subaccounts
 │   ├── initialize-donation.js         # Public: securely starts a donation server-side; decides
 │   │                                   # settlement subaccount + platform fee, the browser never does
+│   ├── submit-campaign.js             # Public: visitor campaign submission — creates a 'pending'
+│   │                                   # campaign + its unverified beneficiary in one request,
+│   │                                   # with rollback if either half fails
 │   ├── donations.js                   # Public: recent donors for one campaign, incl. gross/fee/net —
 │   │                                   # anonymity resolved server-side
 │   ├── progress.js                    # Public: live totals for one campaign
@@ -487,20 +501,51 @@ patient-fundraiser/
 │   └── admin/
 │       ├── auth.js                     # Protected/login: login + logout + session check, via
 │       │                                # ?action=login | ?action=logout | ?action=me
-│       │                                # (previously three separate files: login.js, logout.js, me.js)
 │       ├── campaigns.js                # Protected: create/edit/delete/list campaigns, safe image
-│       │                                # lifecycle, PLUS ?route=analytics (dashboard overview numbers)
-│       │                                # and ?route=upload-image (patient photo upload) — previously
-│       │                                # three separate files: campaigns.js, analytics.js, upload-image.js
-│       └── beneficiaries.js            # Protected: view/save a campaign's beneficiary (full or masked),
-│                                        # PLUS ?route=banks (Paystack bank list), ?route=verify (Paystack
-│                                        # account verification + subaccount creation), ?route=settlement
-│                                        # (enable/pause), and ?route=platform-fee (the master switch) —
-│                                        # previously five separate files: beneficiaries.js, banks.js,
-│                                        # verify-beneficiary.js, settlement.js, platform-fee.js
+│       │                                # lifecycle, PLUS ?route=analytics, ?route=upload-image,
+│       │                                # and combined campaign+beneficiary creation on POST
+│       └── beneficiaries.js            # view/save a campaign's beneficiary (full or masked, admin-only),
+│                                        # PLUS ?route=banks (PUBLIC — no admin session required, since
+│                                        # it's just Paystack's public bank list), ?route=verify,
+│                                        # ?route=settlement, and ?route=platform-fee (all admin-only)
 ├── supabase.sql                     # Full schema: tables, migrations, storage bucket — always safe to re-run
 └── README.md                        # This file
 ```
+
+## Visitor campaign submissions & admin review
+
+Anyone can tap **"+ Start a Fundraiser"** on the homepage to submit a new
+patient campaign via `submit-campaign.html`, which collects both the
+campaign details and the beneficiary/payout details in one form, then
+posts them together to `POST /api/submit-campaign`.
+
+**A visitor submission is never published or payable immediately.** It
+always starts as:
+- `fundraiser.status = 'pending'` — invisible on the public homepage
+  (which only ever lists `status = 'active'` campaigns) and shows no
+  working donate button on its own page (the donate button only renders
+  for `status === 'active'`, unchanged from before).
+- `beneficiaries.verification_status = 'pending'`,
+  `settlement_enabled = false`, `paystack_subaccount_code = null` — the
+  table's own existing defaults. A visitor has no way, through this or
+  any other public endpoint, to set any of those to anything else.
+
+An admin reviews pending submissions in the dashboard's **Pending
+Review** tab, and can:
+- **Approve** — a `PATCH` to the existing `/api/admin/campaigns?id=...`
+  endpoint setting `status: 'active'`. The beneficiary is completely
+  unaffected by this — it still has to go through the normal
+  Verify → Enable Settlement steps via the existing "Beneficiary" modal,
+  exactly like any campaign the admin creates directly.
+- **Reject** — the same endpoint, `status: 'rejected'`.
+
+Both actions reuse the existing campaign PATCH endpoint rather than
+adding new ones. Bank account details are shown **masked** in the
+Pending Review list (same as everywhere else in the dashboard) — the
+full account number is only ever visible inside the existing
+"Beneficiary" modal, which already requires an admin session.
+
+
 
 ## Environment variables reference
 | Variable | Where it's used | Keep secret? |
@@ -532,6 +577,71 @@ The dashboard checks your login on every page load and every API call.
 Keep `ADMIN_PASSWORD` and `ADMIN_SESSION_SECRET` long and unique.
 
 ---
+
+## Admin dashboard data-loading fixes (this update)
+
+This update fixed a set of real bugs found during a careful inspection of
+the admin dashboard's data loading, without touching Supabase SQL, the
+public campaign/donor APIs, or the Paystack webhook/donation-calculation
+logic. **Files changed: `admin/dashboard.html` and
+`api/admin/campaigns.js`.**
+
+### `admin/dashboard.html`
+1. **New "Rejected" tab.** The campaign tabs were missing a dedicated
+   view for rejected visitor submissions — you could only see them mixed
+   into "All", or briefly on their way through "Pending Review". Added a
+   sixth tab (`data-tab="rejected"`, `#countRejected`) alongside the
+   existing five, filtering on `campaign.status === 'rejected'`, with its
+   count wired into `updateTabCountsAndRender()`. The existing four tabs
+   (Active, Pending Review, Goal Achieved, Archived) and All are
+   untouched. Rendering "just works" for the new tab because
+   `renderCampaignTable()` already had status-aware badge styling
+   (`.badge.rejected`) and an Approve action for rejected campaigns from
+   before — it was only ever missing a tab to reach that filtered view.
+2. **Real error messages instead of a generic "Could not load
+   campaigns."** `loadCampaigns()` and `loadAnalytics()` now read the
+   actual JSON body of a non-OK response from `/api/admin/campaigns` or
+   `/api/admin/campaigns?route=analytics`, log the HTTP status and full
+   response body to the console (`describeFailedResponse()`), and show
+   the server's own `error` message in a new banner
+   (`#dashboardError`) at the top of the dashboard as well as in the
+   campaigns table's empty state. A generic message is shown only as a
+   last resort, when the server didn't send one.
+
+### `api/admin/campaigns.js`
+3. **Removed a stale, unreachable `return` after the combined
+   campaign+beneficiary POST handler.** The valid `return
+   res.status(201).json({ campaign: newCampaignRecord, beneficiary:
+   beneficiaryResult.data })` was immediately followed by a second,
+   dead `return res.status(201).json({ campaign: newCampaignRecord })`
+   and an extra stray closing brace. That extra brace made the file's
+   braces imbalanced by one (verified with a brace-depth check before
+   and after the fix) — removed both the dead return and the stray
+   brace; the combined creation logic itself is unchanged.
+4. **Checked for the reported duplicate `total_gross_donations`
+   property.** On inspection, `handleAnalytics()`'s response object only
+   sets `total_gross_donations` once — no duplicate key was present in
+   this version of the file, so no change was needed here beyond
+   confirming it.
+5. **Made the analytics "recent donations" query resilient to a failed
+   nested-relationship embed.** `fundraiser:fundraiser_id(patient_name)`
+   depends on PostgREST correctly recognizing the `donations` →
+   `fundraiser` foreign key — that embed can fail on its own (schema
+   cache reload, ambiguous relationship name, transient PostgREST
+   issue) even when the plain tables are fine, and a failure here used
+   to just leave `recent_donations` empty. It now falls back
+   automatically: fetch recent donations without the nested
+   relationship, collect the distinct `fundraiser_id` values, fetch
+   those fundraisers' `patient_name`s in one extra request, and merge
+   the name back onto each donation as `donation.fundraiser.patient_name`
+   — the exact shape the dashboard's `renderDonations()` already
+   expects, so no frontend changes were needed for this part. The
+   analytics endpoint no longer depends on the embed succeeding.
+
+None of these changes touch `supabase.sql`, the public campaign/donor
+APIs (`api/campaigns.js`, `api/campaign.js`, `api/donations.js`,
+`api/progress.js`), `api/paystack-webhook.js`, or
+`api/initialize-donation.js`'s donation/fee calculation logic.
 
 ## Notes for beginners
 - GitHub, Supabase, and Vercel all work through their websites in Chrome
