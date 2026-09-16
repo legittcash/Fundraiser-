@@ -258,6 +258,24 @@
 
   .status-msg { text-align: center; color: var(--text-muted); padding: 30px; }
   #authGate { display: flex; align-items: center; justify-content: center; min-height: 60vh; }
+
+  /* Dashboard-level error banner — shown when a data-loading request
+     (campaigns or analytics) comes back with a non-OK response, so the
+     admin sees the actual server-provided error instead of a generic
+     "could not load" message with no way to diagnose it. */
+  .dashboard-error {
+    display: none;
+    background: #fef2f2;
+    border: 1px solid #fecaca;
+    color: #991b1b;
+    border-radius: 10px;
+    padding: 12px 16px;
+    font-size: 0.85rem;
+    margin-bottom: 20px;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .dashboard-error.open { display: block; }
 </style>
 </head>
 <body>
@@ -273,6 +291,10 @@
     <h1>Admin Dashboard</h1>
     <button class="logout-btn" id="logoutBtn">Log out</button>
   </div>
+
+  <!-- Shown whenever /api/admin/campaigns or ?route=analytics returns a
+       non-OK response, with the actual error message the server sent. -->
+  <div class="dashboard-error" id="dashboardError"></div>
 
   <!-- ============ ANALYTICS ============ -->
   <h2 class="section-title">Overview</h2>
@@ -317,6 +339,7 @@
     <button class="tab-btn" data-tab="pending">Pending Review <span class="tab-count" id="countPending">0</span></button>
     <button class="tab-btn" data-tab="goal_achieved">Goal Achieved <span class="tab-count" id="countGoalAchieved">0</span></button>
     <button class="tab-btn" data-tab="archived">Archived <span class="tab-count" id="countArchived">0</span></button>
+    <button class="tab-btn" data-tab="rejected">Rejected <span class="tab-count" id="countRejected">0</span></button>
     <button class="tab-btn" data-tab="all">All <span class="tab-count" id="countAll">0</span></button>
   </div>
 
@@ -519,14 +542,58 @@
 
   /*
     =========================================================
+    SHARED ERROR BANNER
+    =========================================================
+    Used by both loadAnalytics() and loadCampaigns() so a failed request
+    shows the real, server-provided error message instead of a generic
+    "could not load" placeholder, while the full HTTP status and response
+    body always go to the console for debugging.
+  */
+  const dashboardErrorEl = document.getElementById('dashboardError');
+
+  function showDashboardError(message) {
+    dashboardErrorEl.textContent = message;
+    dashboardErrorEl.classList.add('open');
+  }
+
+  function clearDashboardError() {
+    dashboardErrorEl.textContent = '';
+    dashboardErrorEl.classList.remove('open');
+  }
+
+  // Reads a fetch Response that was not `ok`, logs its HTTP status and
+  // raw body to the console, and returns the best available human-readable
+  // error message (the server's own `error` field when the body is JSON,
+  // otherwise the raw body text).
+  async function describeFailedResponse(res, context) {
+    let rawText = '';
+    let data = null;
+    try {
+      rawText = await res.text();
+      data = rawText ? JSON.parse(rawText) : null;
+    } catch (parseErr) {
+      // Response wasn't JSON — rawText still holds whatever the server sent.
+    }
+    console.error(`${context} failed: HTTP ${res.status}`, data !== null ? data : rawText);
+    const message = (data && (data.error || data.message)) || rawText || `Server returned HTTP ${res.status}.`;
+    return message;
+  }
+
+  /*
+    =========================================================
     ANALYTICS
     =========================================================
   */
   async function loadAnalytics() {
     try {
       const res = await fetch('/api/admin/campaigns?route=analytics');
-      if (!res.ok) return;
+      if (!res.ok) {
+        const message = await describeFailedResponse(res, 'Loading analytics');
+        showDashboardError(`Could not load analytics: ${message}`);
+        return;
+      }
       const data = await res.json();
+      clearDashboardError();
 
       const cards = document.querySelectorAll('#statsGrid .stat-value');
       cards[0].textContent = data.total_patients;
@@ -540,6 +607,7 @@
       renderDonations(data.recent_donations || []);
     } catch (err) {
       console.error('Failed to load analytics:', err);
+      showDashboardError(`Could not load analytics: ${err.message || 'Network error.'}`);
     }
   }
 
@@ -688,16 +756,21 @@
         : '/api/admin/campaigns';
       const res = await fetch(url);
       if (!res.ok) {
-        campaignTableBody.innerHTML = '<tr><td colspan="11" class="status-msg">Could not load campaigns.</td></tr>';
+        const message = await describeFailedResponse(res, 'Loading campaigns');
+        showDashboardError(`Could not load campaigns: ${message}`);
+        campaignTableBody.innerHTML = `<tr><td colspan="11" class="status-msg">Could not load campaigns: ${escapeHtml(message)}</td></tr>`;
         return;
       }
       const data = await res.json();
+      clearDashboardError();
       currentCampaignsCache = data.campaigns || [];
       await loadBeneficiarySummaries();
       updateTabCountsAndRender();
     } catch (err) {
       console.error('Failed to load campaigns:', err);
-      campaignTableBody.innerHTML = '<tr><td colspan="11" class="status-msg">Could not load campaigns.</td></tr>';
+      const message = err.message || 'Network error.';
+      showDashboardError(`Could not load campaigns: ${message}`);
+      campaignTableBody.innerHTML = `<tr><td colspan="11" class="status-msg">Could not load campaigns: ${escapeHtml(message)}</td></tr>`;
     }
   }
 
@@ -723,6 +796,8 @@
         return campaigns.filter(hasReachedGoal);
       case 'archived':
         return campaigns.filter((c) => c.status === 'archived');
+      case 'rejected':
+        return campaigns.filter((c) => c.status === 'rejected');
       case 'all':
       default:
         return campaigns;
@@ -734,6 +809,7 @@
     document.getElementById('countPending').textContent = filterCampaignsByTab(currentCampaignsCache, 'pending').length;
     document.getElementById('countGoalAchieved').textContent = filterCampaignsByTab(currentCampaignsCache, 'goal_achieved').length;
     document.getElementById('countArchived').textContent = filterCampaignsByTab(currentCampaignsCache, 'archived').length;
+    document.getElementById('countRejected').textContent = filterCampaignsByTab(currentCampaignsCache, 'rejected').length;
     document.getElementById('countAll').textContent = currentCampaignsCache.length;
 
     renderCampaignTable(filterCampaignsByTab(currentCampaignsCache, currentTab));
