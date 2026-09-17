@@ -41,7 +41,13 @@
 // that starts completely inert.
 
 import crypto from 'crypto';
-import { uploadCampaignImage, deleteCampaignImage } from '../lib/campaign-images.js';
+import campaignImages from '../lib/campaign-images.js';
+// Destructured once, right here, from the module's single default
+// export — every call site below (uploadCampaignImage(...),
+// deleteCampaignImage(...)) is unchanged; only how they're obtained
+// from lib/campaign-images.js changed. See the comment at the bottom of
+// that file for why.
+const { uploadCampaignImage, deleteCampaignImage } = campaignImages;
 import { insertBeneficiary } from '../lib/beneficiary.js';
 
 function getSupabaseConfig() {
