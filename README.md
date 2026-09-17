@@ -458,6 +458,8 @@ few seconds later the totals and Recent Donors list update.
 
 ```
 patient-fundraiser/
+├── package.json                     # "type": "module" — declares the whole project as ES Modules,
+│                                    # so Vercel's build/bundling has no ESM/CommonJS ambiguity to resolve
 ├── index.html                      # Public homepage: Jiji-style campaign cards, search,
 │                                    # "+ Start a Fundraiser" button
 ├── campaign.html                   # Public campaign details page — donate button calls
@@ -475,6 +477,7 @@ patient-fundraiser/
 ├── lib/
 │   ├── admin-auth.js                  # Shared login-session helper used by admin APIs
 │   ├── campaign-images.js             # Shared helper: upload/delete campaign photos in Storage
+│   │                                  # (single default export — see the file's own comments)
 │   │                                   # (used by both the admin upload route and the public
 │   │                                   # visitor submission endpoint)
 │   ├── beneficiary.js                 # Shared helper: insert a brand-new beneficiary row,
@@ -577,6 +580,207 @@ The dashboard checks your login on every page load and every API call.
 Keep `ADMIN_PASSWORD` and `ADMIN_SESSION_SECRET` long and unique.
 
 ---
+
+## Making the shared image-upload helper deployment-proof (this update)
+
+The `uploadCampaignImage is not a function` crash was still occurring in
+the deployed Vercel runtime for **both** `api/submit-campaign.js` and
+`api/admin/campaigns.js`, even though local inspection (reading the
+source, and dynamically `import()`-ing the module directly in Node)
+kept showing a perfectly matched named export/import. This update
+replaces the previous typeof-guards-only approach with an actual change
+to how the module is exported and imported. **Files changed:
+`package.json` (new), `lib/campaign-images.js`, `api/submit-campaign.js`,
+`api/admin/campaigns.js`.**
+
+### Why the source looked correct locally but could still fail on Vercel
+Every previous check ran through Node's own **native ESM loader** —
+`node --check` and `import('./lib/campaign-images.js')` — which resolves
+named exports directly and unambiguously; there's no bundler in that
+path at all. The deployed Vercel function, by contrast, goes through
+`@vercel/node`'s build pipeline, which bundles each `api/*.js` entry
+point (and the local files it imports, like `lib/campaign-images.js`)
+with esbuild before it ever runs. Two things about this project made
+that bundling step more ambiguous than it needed to be:
+- **No `package.json` existed anywhere in the project**, so nothing
+  explicitly told Node or the build tooling that these `.js` files are
+  ES Modules — that was only ever implied by the `import`/`export`
+  syntax inside each file, which is exactly the kind of ambiguity that
+  ESM/CommonJS interop bugs come from.
+- **Named exports are the least consistently handled part of that
+  ESM/CommonJS boundary.** Different bundlers — and different code paths
+  within the same bundler — can copy a named export directly onto the
+  compiled module object, nest it under `.default`, or otherwise fail to
+  preserve it exactly depending on how and where it's referenced.
+  `uploadCampaignImage()` is only ever called conditionally (inside an
+  `if (fileBase64 && contentType)` block in both files), unlike, say,
+  `insertBeneficiary()` from `lib/beneficiary.js`, which both files call
+  unconditionally on their main path — a plausible reason this one
+  export was affected while others from neighboring lib files weren't.
+  (This is offered as the most likely explanation given the evidence,
+  not a claim that can be verified without access to Vercel's actual
+  build output for this project.)
+
+Either cause — or both together — point at the same fix: remove the
+ambiguity instead of working around its symptom.
+
+### What changed
+1. **Added `package.json`** at the project root with `"type": "module"`.
+   This is a pure addition — no existing file's logic changed — but it
+   removes any doubt for Node and for Vercel's build system about how
+   every `.js` file in the project should be interpreted, project-wide.
+2. **`lib/campaign-images.js` now has a single `export default { ... }`**
+   containing `uploadCampaignImage`, `deleteCampaignImage`, and
+   `extractStoragePath`, instead of three separate named exports. A
+   single default export is the one part of ESM/CommonJS interop that
+   every mainstream bundler (esbuild, webpack, Babel, SWC) resolves the
+   same way — there's only one thing to unwrap (`.default`), so there's
+   no per-export ambiguity left to hit. **This is still the exact same
+   one shared implementation** — only how it's exported changed, nothing
+   about what it does or how it's called.
+3. **`api/submit-campaign.js` and `api/admin/campaigns.js`** now do
+   `import campaignImages from '../lib/campaign-images.js'` and
+   `const { uploadCampaignImage, deleteCampaignImage } = campaignImages;`
+   once, right after the import. Every actual call site below that
+   (`uploadCampaignImage(...)`, `deleteCampaignImage(...)`, used many
+   times across both files, including inside the rollback/cleanup paths)
+   is completely unchanged — only how those two names are obtained from
+   the module changed.
+
+The `typeof uploadCampaignImage === 'function'` guards added in the
+previous update are still in place, but they are **not** the fix here —
+they're a harmless safety net for a genuinely different future failure
+(e.g. a typo in a later refactor), not a workaround for this one. The
+actual fix is the module-export change above, which is
+deployment-mechanism-level rather than a runtime check.
+
+### Confirming the fix actually resolves correctly
+Re-ran the same dynamic-import test as before, plus a check of the new
+shape, and additionally imported both `api/submit-campaign.js` and
+`api/admin/campaigns.js` themselves end-to-end to confirm their default
+handler exports resolve with the new import in place — all four came
+back exactly as expected (`typeof campaignImages.default.uploadCampaignImage
+=== 'function'`, etc.), with no errors.
+
+No duplicate upload implementation was created — there is still exactly
+one `uploadCampaignImage` function, in one file. Supabase SQL, Paystack
+logic, donation calculations, and the rest of the admin dashboard were
+not touched. This does not change the earlier open question from the
+previous update — if the Supabase `campaign-images` bucket itself still
+doesn't exist or is misconfigured in the live project, uploads will
+still fail, just with a real Supabase error in the logs (now including
+the HTTP status) instead of a `TypeError`.
+
+## Deep-diving the shared image-upload failure (this update)
+
+Both the visitor and admin photo-upload flows were failing while every
+other operation (campaigns, donations, analytics, admin campaign
+creation *without* a photo) kept working. **Files changed:
+`api/admin/campaigns.js` and `lib/campaign-images.js`.**
+`api/submit-campaign.js` was inspected again but needed no further
+changes this round (its guard from the previous update already covers
+it). No separate `api/admin/upload-image.js` file exists — its logic
+lives inside `api/admin/campaigns.js` as the `?route=upload-image`
+branch (see the comment block at the top of that file).
+
+### A/B/C — Tracing the runtime path and re-checking for an import/export problem
+Traced both flows end to end:
+- **Visitor:** `submit-campaign.html` → `POST /api/submit-campaign` →
+  `uploadCampaignImage()` (only called if a photo was attached).
+- **Admin:** `admin/dashboard.html`'s photo `<input>` `change` handler →
+  `POST /api/admin/campaigns?route=upload-image` → `handleUploadImage()`
+  → the *same* `uploadCampaignImage()` — this happens in its own request,
+  **before** the admin ever submits the rest of the campaign form (the
+  campaign is later created with the already-uploaded `image_url` as a
+  plain string). This is exactly why "campaign creation works without a
+  photo" for admin too: the creation endpoint itself never touches
+  `uploadCampaignImage()` — only the separate upload step does.
+
+Re-verified, once again both statically and by dynamically importing the
+module in Node: `lib/campaign-images.js` exports exactly one
+`uploadCampaignImage`, as a plain named `export async function` (no
+default export, no CommonJS `module.exports`, no ESM/CJS interop
+wrapper) — and both `api/submit-campaign.js` and `api/admin/campaigns.js`
+import it the identical way and consume its `{ ok, url }` /
+`{ ok, error, status }` return shape correctly (item F — confirmed, no
+mismatch). There is exactly one implementation (item G — confirmed no
+duplicate exists anywhere in the repo). **This is exactly why both flows
+fail identically: they are not two similar bugs, they are one shared
+function failing for one shared reason.**
+
+### D/E — Where the real failure is
+Since the JavaScript wiring is provably correct on both ends, and the
+failure only ever appears the moment a photo is actually involved, the
+failure has to be in the one thing that only happens then: the live
+`fetch()` call `uploadCampaignImage()` makes to Supabase Storage's REST
+API (`POST {SUPABASE_URL}/storage/v1/object/campaign-images/{fileName}`).
+Everything else these two files do — creating/editing/listing campaigns,
+inserting beneficiaries, running analytics — uses a *different* Supabase
+surface (`/rest/v1/...`) and is confirmed working, which is consistent
+with the Storage-specific call being the one thing that's broken.
+
+Checked the bucket name and path end to end for a mismatch (item E):
+`lib/campaign-images.js` uses `campaign-images` for both the upload path
+and the public URL it constructs, `supabase.sql`'s
+`insert into storage.buckets (id, name, public) values
+('campaign-images', 'campaign-images', true)` uses the identical name,
+and `README.md`'s manual setup step says to create a bucket named
+exactly `campaign-images`. **No naming mismatch exists in the code, SQL,
+or docs** — everything agrees on `campaign-images`.
+
+**Root cause:** given the code is provably correct and consistent
+end-to-end, and the failure is isolated to the one real network call to
+Supabase Storage, the most likely actual cause is a mismatch between
+that code and the *live* Supabase project it's pointed at — most likely
+either the `campaign-images` bucket doesn't actually exist yet in that
+project (the `supabase.sql` insert for it was never run, or was run
+against a different Supabase project than the one `SUPABASE_URL` /
+`SUPABASE_SERVICE_ROLE_KEY` point to), or it exists under a slightly
+different name/casing than exactly `campaign-images`. This is a data/
+config state that can't be confirmed or fixed from the source code
+alone — see "Supabase check required" below. (Note: this supersedes the
+previous update's "stale build cache" theory, which explained the
+originally-reported crash text but not this new, more specific evidence
+that the failure is isolated to the Storage call itself.)
+
+### What was actually changed in code
+1. **`lib/campaign-images.js`** — `uploadCampaignImage()`'s failure log
+   now includes the actual HTTP status Supabase Storage returned,
+   alongside the response body it already logged. A `404` here means
+   "bucket not found" (wrong/missing bucket); a `400`/`403` means a
+   permissions or policy problem instead of a naming problem — the two
+   look identical in the generic message currently shown to users, but
+   this makes them immediately distinguishable in the Vercel logs the
+   next time this happens, which is what's needed to actually confirm
+   which of the two it is. No change to the request itself (URL, method,
+   headers, body, bucket name) — that was already correct.
+2. **`api/admin/campaigns.js`** — added the identical defensive guard
+   already present in `api/submit-campaign.js`: `handleUploadImage()`
+   now checks `typeof uploadCampaignImage === 'function'` before calling
+   it, logging a clear diagnostic and returning a clean `500` instead of
+   an unhandled crash if that's ever false. This was previously only on
+   the visitor side; both entry points are now equally hardened and will
+   report identically if a genuine JS-level breakage (as opposed to a
+   Supabase Storage config issue) is ever the real cause.
+
+### Supabase dashboard/storage check required — yes
+This is not fixable from the application code alone. Please verify, in
+the Supabase dashboard for the project `SUPABASE_URL` actually points
+at: **Storage → a bucket exists named exactly `campaign-images`
+(lowercase, hyphenated, no trailing/leading space), and it's marked
+Public.** If it's missing or misnamed, either re-run the relevant block
+of `supabase.sql` (the `insert into storage.buckets ...` statement,
+which is safe to re-run — `on conflict (id) do nothing`) against that
+project, or create it by hand via Storage → New bucket, matching the
+name exactly. If the bucket does exist and is named correctly, the next
+upload attempt's Vercel log line (`Supabase Storage upload failed — HTTP
+...`) will show whether it's actually a permissions/policy problem
+instead, pointing at the `SUPABASE_SERVICE_ROLE_KEY` or the storage RLS
+policy from `supabase.sql` instead of the bucket itself.
+
+No changes were made to `supabase.sql`, Paystack logic, donation
+calculations, or anything else in the admin dashboard beyond the one
+upload guard described above.
 
 ## Investigating the reported `uploadCampaignImage is not a function` crash
 
