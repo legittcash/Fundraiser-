@@ -48,7 +48,13 @@
 
 import crypto from 'crypto';
 import { rejectIfNotAdmin } from '../../lib/admin-auth.js';
-import { deleteCampaignImage, uploadCampaignImage } from '../../lib/campaign-images.js';
+import campaignImages from '../../lib/campaign-images.js';
+// Destructured once, right here, from the module's single default
+// export — every call site below (uploadCampaignImage(...),
+// deleteCampaignImage(...)) is unchanged; only how they're obtained
+// from lib/campaign-images.js changed. See the comment at the bottom of
+// that file for why.
+const { uploadCampaignImage, deleteCampaignImage } = campaignImages;
 import { insertBeneficiary } from '../../lib/beneficiary.js';
 
 function getSupabaseConfig() {
@@ -260,6 +266,20 @@ async function handleUploadImage(req, res) {
   if (req.method !== 'POST') {
     res.setHeader('Allow', ['POST']);
     return res.status(405).json({ error: 'Method not allowed' });
+  }
+
+  // Defensive guard against an import/export or bundling problem making
+  // this shared helper uncallable — mirrors the same guard in
+  // api/submit-campaign.js, which imports this exact function from this
+  // exact file the exact same way. Both entry points now fail the same
+  // safe, diagnosable way instead of an unhandled TypeError if this ever
+  // genuinely happens (e.g. a future refactor breaking the export).
+  if (typeof uploadCampaignImage !== 'function') {
+    console.error(
+      `[admin/campaigns:upload-image] uploadCampaignImage is not available as a function (got: ${typeof uploadCampaignImage}). ` +
+        `This points to a broken import from lib/campaign-images.js or a stale/partial deployment.`
+    );
+    return res.status(500).json({ error: 'Image upload is temporarily unavailable. Please try again shortly.' });
   }
 
   const { fileBase64, contentType } = req.body || {};
