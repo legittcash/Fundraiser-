@@ -138,6 +138,68 @@
     text-decoration: none;
     font-size: 0.9rem;
   }
+
+  .tracking-box {
+    text-align: left;
+    background: #f9fafb;
+    border-radius: 12px;
+    padding: 16px;
+    margin-top: 20px;
+  }
+  .tracking-box p.tracking-note {
+    font-size: 0.85rem;
+    color: var(--text-muted);
+    margin: 0 0 10px;
+    line-height: 1.45;
+  }
+  .tracking-link-row {
+    display: flex;
+    gap: 8px;
+  }
+  #trackingLinkInput {
+    flex: 1;
+    min-width: 0;
+    font-size: 0.82rem;
+    background: #fff;
+  }
+  .tracking-actions {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin-top: 12px;
+  }
+  .tracking-actions button,
+  .tracking-actions a {
+    width: 100%;
+    padding: 12px;
+    border-radius: 10px;
+    font-size: 0.9rem;
+    font-weight: 700;
+    text-align: center;
+    text-decoration: none;
+    cursor: pointer;
+    border: none;
+    box-sizing: border-box;
+  }
+  #copyTrackingBtn {
+    background: #fff;
+    color: var(--pink-dark);
+    border: 1.5px solid var(--pink);
+  }
+  #openTrackingBtn {
+    background: var(--pink);
+    color: #fff;
+    display: inline-block;
+  }
+  #copyTrackingBtn:hover { background: #fff0f6; }
+  #openTrackingBtn:hover { background: var(--pink-dark); }
+  .copy-confirm {
+    font-size: 0.8rem;
+    color: #166534;
+    margin-top: 6px;
+    text-align: center;
+    min-height: 1em;
+  }
 </style>
 </head>
 <body>
@@ -154,6 +216,26 @@
     </p>
 
     <form id="submitForm">
+      <h2 class="section-title">Your Information</h2>
+      <p class="privacy-note">
+        🔒 This is about you, the person submitting this campaign — not the patient.
+        We use it to send you a private tracking link so you can check on your
+        submission. It is never shown publicly.
+      </p>
+
+      <label for="submitterName">Your full name *</label>
+      <input type="text" id="submitterName" required />
+
+      <label for="submitterEmail">Your email address (optional)</label>
+      <input type="email" id="submitterEmail" placeholder="you@example.com" />
+      <p class="privacy-note" style="margin-top:6px;">
+        Optional, but useful — we may use this in the future to email you when your
+        campaign's status changes. We won't use it for anything else.
+      </p>
+
+      <label for="submitterPhone">Your phone number *</label>
+      <input type="tel" id="submitterPhone" placeholder="e.g. 08012345678 or +2348012345678" required />
+
       <h2 class="section-title">Patient / Campaign Information</h2>
 
       <label for="patientName">Patient name *</label>
@@ -212,7 +294,24 @@
   <div class="card success-panel" id="successCard" style="display:none;">
     <div class="icon">🎉</div>
     <h1>Thank you!</h1>
-    <p id="successMessage">Your campaign has been submitted and is pending review by our team.</p>
+    <p id="successMessage">Your campaign has been submitted successfully and is awaiting admin review.</p>
+
+    <div class="tracking-box" id="trackingBox" style="display:none;">
+      <p class="tracking-note">
+        Save this private tracking link. You can use it later to check whether your
+        campaign has been approved. We have not sent you an email — this link is the
+        only way to check your status.
+      </p>
+      <div class="tracking-link-row">
+        <input type="text" id="trackingLinkInput" readonly />
+      </div>
+      <div class="tracking-actions">
+        <button type="button" id="copyTrackingBtn">Copy Tracking Link</button>
+        <a href="#" id="openTrackingBtn">Open Tracking Page</a>
+      </div>
+      <p class="copy-confirm" id="copyConfirm"></p>
+    </div>
+
     <a href="index.html">Return to homepage</a>
   </div>
 </div>
@@ -333,6 +432,9 @@
     formError.textContent = '';
 
     const payload = {
+      submitter_name: document.getElementById('submitterName').value.trim(),
+      submitter_email: document.getElementById('submitterEmail').value.trim(),
+      submitter_phone: document.getElementById('submitterPhone').value.trim(),
       patient_name: document.getElementById('patientName').value.trim(),
       hospital: document.getElementById('hospital').value.trim(),
       diagnosis: document.getElementById('diagnosis').value.trim(),
@@ -352,6 +454,10 @@
       payload.contentType = selectedFileContentType;
     }
 
+    if (!payload.submitter_name || !payload.submitter_phone) {
+      formError.textContent = 'Please fill in your name and phone number.';
+      return;
+    }
     if (!payload.patient_name || !payload.goal_amount || !payload.phone_number) {
       formError.textContent = 'Please fill in the patient name, goal amount, and contact phone.';
       return;
@@ -412,8 +518,40 @@
       }
 
       document.getElementById('formCard').style.display = 'none';
-      document.getElementById('successMessage').textContent = data.message || 'Your campaign has been submitted and is pending review.';
+      document.getElementById('successMessage').textContent =
+        'Your campaign has been submitted successfully and is awaiting admin review.';
       document.getElementById('successCard').style.display = 'block';
+
+      if (data.trackingUrl) {
+        const fullTrackingUrl = new URL(data.trackingUrl, window.location.origin).toString();
+        const trackingBox = document.getElementById('trackingBox');
+        const trackingInput = document.getElementById('trackingLinkInput');
+        const openBtn = document.getElementById('openTrackingBtn');
+        const copyBtn = document.getElementById('copyTrackingBtn');
+        const copyConfirm = document.getElementById('copyConfirm');
+
+        trackingInput.value = fullTrackingUrl;
+        openBtn.href = data.trackingUrl;
+        trackingBox.style.display = 'block';
+
+        trackingInput.addEventListener('click', () => trackingInput.select());
+
+        copyBtn.addEventListener('click', async () => {
+          try {
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+              await navigator.clipboard.writeText(fullTrackingUrl);
+            } else {
+              trackingInput.select();
+              document.execCommand('copy');
+            }
+            copyConfirm.textContent = 'Copied!';
+          } catch (err) {
+            trackingInput.select();
+            copyConfirm.textContent = 'Could not copy automatically — select the link above and copy it manually.';
+          }
+          setTimeout(() => { copyConfirm.textContent = ''; }, 3000);
+        });
+      }
     } catch (err) {
       // This catch is now reached only by genuine network-level failures
       // (request never reached the server, connection dropped, etc.) —
