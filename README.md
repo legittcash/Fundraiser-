@@ -392,6 +392,16 @@ project needs, including `beneficiaries` and `platform_settings`, and is
 always safe to re-run — everything uses `if not exists` / safe
 backfills, and nothing here ever deletes or resets existing data.
 
+### 4a. Run `supabase-tracking.sql` (private submission tracking)
+Supabase → **SQL Editor** → **New query** → paste the **entire**
+`supabase-tracking.sql` file → **Run**. This is a separate, additive
+migration that adds the columns the private tracking-link feature needs
+(`submitter_name`, `submitter_email`, `submitter_phone`,
+`tracking_token`, `rejection_reason`) to the existing `fundraiser`
+table, plus a unique index on `tracking_token`. It uses
+`add column if not exists` throughout, never drops or replaces the
+table, and is always safe to re-run. Run it **after** `supabase.sql`.
+
 ### 4b. Double check the storage bucket exists
 Storage → confirm a **Public** bucket named exactly `campaign-images`
 exists (create it if not).
@@ -452,9 +462,10 @@ few seconds later the totals and Recent Donors list update.
 > related admin operations into fewer, router-style files — using a
 > `?route=` or `?action=` query parameter to pick which section of the
 > file handles a given request — to stay comfortably under that limit
-> (**10 functions total**) while keeping every feature working exactly
-> as before. This is purely a file-organization choice; none of the
-> underlying logic changed.
+> (**11 functions total** as of the private tracking feature below,
+> which added one new file, `api/track-campaign.js`) while keeping every
+> feature working exactly as before. This is purely a file-organization
+> choice; none of the underlying logic changed.
 
 ```
 patient-fundraiser/
@@ -466,12 +477,17 @@ patient-fundraiser/
 │                                    # /api/initialize-donation and redirects to Paystack's
 │                                    # hosted checkout (no PaystackPop / public key used here anymore)
 ├── submit-campaign.html            # Public visitor campaign submission form — patient info
-│                                    # + beneficiary/payout info, with a searchable bank field
+│                                    # + beneficiary/payout info + submitter contact info,
+│                                    # with a searchable bank field, returns a private tracking link
+├── track.html                      # Public, private tracking-link status page — no login,
+│                                    # the token in the URL itself is the access credential
 ├── admin/
 │   ├── login.html                    # Admin login form
 │   └── dashboard.html                # Campaigns (6 tabs incl. Pending Review and Rejected),
 │                                      # analytics, combined campaign+beneficiary creation form,
-│                                      # beneficiary/settlement UI, Platform Fee master switch
+│                                      # beneficiary/settlement UI, Platform Fee master switch,
+│                                      # submitter contact info (admin-only column), rejection-reason
+│                                      # prompt on Reject, Copy Public Link on active campaigns
 ├── images/
 │   └── lucy.jpg                      # Fallback image used if a campaign has no photo
 ├── lib/
@@ -486,7 +502,7 @@ patient-fundraiser/
 │   │                                   # fully inert (pending/disabled/no subaccount)
 │   └── paystack.js                    # Shared helper: List Banks / Resolve Account / Create & Update
 │                                       # Subaccount / Initialize Transaction (server-side checkout)
-├── api/                              # 10 files total = 10 Vercel Serverless Functions
+├── api/                              # 11 files total = 11 Vercel Serverless Functions
 │   ├── campaigns.js                   # Public: list active campaigns (+ search) — explicit column list
 │   ├── campaign.js                    # Public: fetch one campaign by slug — explicit column list,
 │   │                                   # NEVER returns anything about beneficiaries/subaccounts
@@ -494,7 +510,10 @@ patient-fundraiser/
 │   │                                   # settlement subaccount + platform fee, the browser never does
 │   ├── submit-campaign.js             # Public: visitor campaign submission — creates a 'pending'
 │   │                                   # campaign + its unverified beneficiary in one request,
+│   │                                   # generates a private tracking_token server-side,
 │   │                                   # with rollback if either half fails
+│   ├── track-campaign.js              # Public: private submission-status lookup by tracking_token —
+│   │                                   # explicit column allowlist, never returns submitter/internal fields
 │   ├── donations.js                   # Public: recent donors for one campaign, incl. gross/fee/net —
 │   │                                   # anonymity resolved server-side
 │   ├── progress.js                    # Public: live totals for one campaign
@@ -506,21 +525,25 @@ patient-fundraiser/
 │       │                                # ?action=login | ?action=logout | ?action=me
 │       ├── campaigns.js                # Protected: create/edit/delete/list campaigns, safe image
 │       │                                # lifecycle, PLUS ?route=analytics, ?route=upload-image,
-│       │                                # and combined campaign+beneficiary creation on POST
+│       │                                # combined campaign+beneficiary creation on POST, and
+│       │                                # rejection_reason save/clear on reject/approve
 │       └── beneficiaries.js            # view/save a campaign's beneficiary (full or masked, admin-only),
 │                                        # PLUS ?route=banks (PUBLIC — no admin session required, since
 │                                        # it's just Paystack's public bank list), ?route=verify,
 │                                        # ?route=settlement, and ?route=platform-fee (all admin-only)
 ├── supabase.sql                     # Full schema: tables, migrations, storage bucket — always safe to re-run
+├── supabase-tracking.sql            # Additive migration: submitter_name/email/phone, tracking_token,
+│                                     # rejection_reason columns + unique index — always safe to re-run
 └── README.md                        # This file
 ```
 
 ## Visitor campaign submissions & admin review
 
 Anyone can tap **"+ Start a Fundraiser"** on the homepage to submit a new
-patient campaign via `submit-campaign.html`, which collects both the
-campaign details and the beneficiary/payout details in one form, then
-posts them together to `POST /api/submit-campaign`.
+patient campaign via `submit-campaign.html`, which collects the
+submitter's own contact info, the campaign details, and the
+beneficiary/payout details in one form, then posts them together to
+`POST /api/submit-campaign`.
 
 **A visitor submission is never published or payable immediately.** It
 always starts as:
@@ -533,22 +556,84 @@ always starts as:
   table's own existing defaults. A visitor has no way, through this or
   any other public endpoint, to set any of those to anything else.
 
+The endpoint also generates a private `tracking_token` (see "Private
+submission tracking links" below) and returns it to the visitor as a
+`trackingUrl` so they can check on their submission later without an
+account.
+
 An admin reviews pending submissions in the dashboard's **Pending
 Review** tab, and can:
 - **Approve** — a `PATCH` to the existing `/api/admin/campaigns?id=...`
   endpoint setting `status: 'active'`. The beneficiary is completely
   unaffected by this — it still has to go through the normal
   Verify → Enable Settlement steps via the existing "Beneficiary" modal,
-  exactly like any campaign the admin creates directly.
-- **Reject** — the same endpoint, `status: 'rejected'`.
+  exactly like any campaign the admin creates directly. Any previous
+  `rejection_reason` is automatically cleared back to `null`.
+- **Reject** — the same endpoint, `status: 'rejected'`. The dashboard
+  prompts the admin for an optional rejection reason, saved to
+  `fundraiser.rejection_reason`; leaving it blank saves a sensible
+  default ("Your submission was not approved at this time.").
 
 Both actions reuse the existing campaign PATCH endpoint rather than
 adding new ones. Bank account details are shown **masked** in the
 Pending Review list (same as everywhere else in the dashboard) — the
 full account number is only ever visible inside the existing
-"Beneficiary" modal, which already requires an admin session.
+"Beneficiary" modal, which already requires an admin session. The
+submitter's own name/email/phone (who filled out the form — distinct
+from the patient and the beneficiary) are shown in a "Submitted By"
+column, visible only inside the authenticated admin dashboard.
 
+## Private submission tracking links
 
+After a successful submission, `submit-campaign.html` shows the visitor
+a private tracking link of the form:
+
+```
+https://fundraiser-bice.vercel.app/track.html?token=THE_TOKEN
+```
+
+along with a **Copy Tracking Link** button and an **Open Tracking Page**
+button. No account or login is required to use it — **the token itself
+is the private access credential**, so anyone who has the exact link can
+see that submission's status. Because of that:
+
+> ⚠️ **Tracking links are private and must never be shared publicly.**
+> Treat a tracking link the same way you'd treat a password reset link —
+> only the person who submitted the campaign should have it. Don't post
+> it publicly, and don't include it in anything indexed by search
+> engines. The admin dashboard never displays a campaign's
+> `tracking_token` in any list or export for this reason.
+
+How it works, end to end:
+1. `api/submit-campaign.js` generates the token **server-side only**,
+   using `crypto.randomBytes(32).toString('base64url')` (256 bits of
+   randomness) — it is never accepted from the browser, and a database
+   collision (astronomically unlikely) is handled the same way a slug
+   collision already is: retry with a fresh token.
+2. The token is saved to `fundraiser.tracking_token`, which has a
+   **unique** index (`supabase-tracking.sql`), so two campaigns can
+   never share one.
+3. `track.html` reads `?token=...` from the URL and calls
+   `GET /api/track-campaign?token=...`.
+4. `api/track-campaign.js` looks up the row by `tracking_token` using
+   the Supabase **service role** key (no admin session required — the
+   token is the credential) and returns only:
+   - `patient_name`
+   - `status`
+   - `created_at`
+   - `rejection_reason` — **only** when `status === 'rejected'`
+   - `public_url` — **only** when `status === 'active'`
+
+   It **never** returns `submitter_name`, `submitter_email`,
+   `submitter_phone`, `tracking_token`, the row's internal `id`, or
+   anything about donations/beneficiaries — the response is built field
+   by field from an explicit allowlist, never `select=*` and never a
+   spread of the raw database row, so a future column added to the
+   table can't leak through here by accident.
+5. `track.html` shows a friendly pending/approved/rejected message
+   accordingly, and a link to the live public campaign page once
+   approved. An invalid, missing, or unknown token shows a friendly
+   error — never a raw database error.
 
 ## Environment variables reference
 | Variable | Where it's used | Keep secret? |
@@ -972,6 +1057,55 @@ None of these changes touch `supabase.sql`, the public campaign/donor
 APIs (`api/campaigns.js`, `api/campaign.js`, `api/donations.js`,
 `api/progress.js`), `api/paystack-webhook.js`, or
 `api/initialize-donation.js`'s donation/fee calculation logic.
+
+## Testing checklist — private submission tracking
+
+Run `supabase-tracking.sql` first (see step 4a above), then verify:
+
+1. **Submission without an image** — Go to `submit-campaign.html`, fill
+   in your name/phone (and optionally email), the patient/campaign
+   fields, and beneficiary/bank fields, but don't attach a photo.
+   Submit. Expect: success panel with "awaiting admin review" message,
+   a tracking link box, working Copy and Open buttons. Confirm in
+   Supabase that the new `fundraiser` row has `status = 'pending'`,
+   `image_url = null`, and non-null `submitter_name`/`submitter_phone`/
+   `tracking_token`.
+2. **Submission with an image** — Repeat, attaching a photo. Expect the
+   same success flow, and the new row's `image_url` points at a file in
+   the `campaign-images` bucket.
+3. **Tracking a pending submission** — Open the tracking link from step
+   1 (or paste `track.html?token=...` manually). Expect a "Pending
+   Review" badge and the "still under review" message — no rejection
+   reason, no public link shown.
+4. **Admin approval** — Log into `admin/dashboard.html`, open the
+   **Pending Review** tab, confirm the submitter's name/email/phone show
+   in the "Submitted By" column, and click **Approve**. Expect the
+   campaign to move to the **Active** tab and appear on the public
+   homepage.
+5. **Tracking an approved submission** — Reload the same tracking link
+   from step 3. Expect an "Approved" badge, the "now live" message, and
+   a working **View Public Campaign Page** button linking to
+   `campaign.html?slug=...`.
+6. **Admin rejection with a reason** — Submit a second test campaign,
+   then in the dashboard click **Reject** on it and type a specific
+   reason (e.g. "Missing hospital documentation") into the prompt.
+   Confirm in Supabase that `status = 'rejected'` and
+   `rejection_reason` matches exactly what you typed.
+7. **Tracking a rejected submission** — Open that submission's tracking
+   link. Expect a "Not Approved" badge and your exact rejection reason
+   displayed.
+8. **Invalid tracking token** — Open `track.html?token=not-a-real-token`
+   and also `track.html` with no `token` at all. Both should show a
+   friendly error message — never a raw database/HTTP error.
+9. **Confirming private fields stay private** — With your browser's dev
+   tools open (Network tab), check the responses of `/api/campaigns`,
+   `/api/campaign?slug=...`, `/api/progress`, `/api/donations`, and
+   `/api/track-campaign?token=...` for any submission. None of them
+   should ever include `submitter_name`, `submitter_email`,
+   `submitter_phone`, or `tracking_token` in the JSON. Also confirm
+   `track.html`'s own page source/network response never includes those
+   fields, and that the admin dashboard's "Submitted By" column and
+   rejection-reason prompt only appear after logging in.
 
 ## Notes for beginners
 - GitHub, Supabase, and Vercel all work through their websites in Chrome
