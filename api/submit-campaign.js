@@ -79,6 +79,16 @@ function generateSlug(patientName) {
   return `${base || 'patient'}-${randomSuffix}`;
 }
 
+// Generates the visitor's own private tracking token — a long,
+// cryptographically random, base64url string (32 random bytes = 256
+// bits of entropy, ~43 characters). This is never accepted from the
+// browser; it is always generated here, server-side, with Node's
+// crypto module. Knowing this exact string is what grants access to
+// /track.html?token=..., so it must be unguessable.
+function generateTrackingToken() {
+  return crypto.randomBytes(32).toString('base64url');
+}
+
 // Short, non-sensitive reference code included in error responses so a
 // visitor can quote it to support, and an admin can grep Vercel's logs
 // for the matching `[submit-campaign:...] ref=<code>` line to see the
@@ -185,6 +195,25 @@ export default async function handler(req, res) {
   }
   const secondaryPhoneNumber = (body.secondary_phone_number || '').trim() || null;
 
+  // ---- Validate submitter fields ----
+  // The submitter is the visitor filling out this form — distinct from
+  // both the patient (patient_name/phone_number above) and the
+  // beneficiary (bank account details below). Their name and phone are
+  // required so a tracking link is actually meaningful to hand back to
+  // someone; email is optional and only useful for a future
+  // notifications feature that does not exist yet.
+  const submitterName = (body.submitter_name || '').trim();
+  if (!submitterName) {
+    logStage('validation', 'Rejected — missing submitter_name.');
+    return res.status(400).json({ error: 'Your full name is required.' });
+  }
+  const submitterPhone = (body.submitter_phone || '').trim();
+  if (!submitterPhone) {
+    logStage('validation', 'Rejected — missing submitter_phone.');
+    return res.status(400).json({ error: 'A contact phone number is required.' });
+  }
+  const submitterEmail = (body.submitter_email || '').trim() || null;
+
   // ---- Validate beneficiary fields ----
   // Required here, unlike the admin's combined form — a visitor
   // submission with no payout details at all wouldn't be reviewable, so
@@ -242,7 +271,14 @@ export default async function handler(req, res) {
   let created = null;
   let lastErrorText = '';
 
+  // Generated once per attempt, same as the slug — so a token collision
+  // (astronomically unlikely with 256 bits of randomness, but handled
+  // safely anyway, the same way slug collisions already are) is fixed
+  // simply by retrying with a fresh token on the next attempt.
+  let trackingToken = null;
+
   for (let attempt = 1; attempt <= MAX_SLUG_ATTEMPTS; attempt++) {
+    trackingToken = generateTrackingToken();
     const newCampaign = {
       patient_name: patientName,
       hospital: body.hospital || null,
@@ -256,6 +292,10 @@ export default async function handler(req, res) {
       donor_count: 0,
       status: 'pending', // NEVER 'active' — only an admin approval can change this
       slug: generateSlug(patientName),
+      submitter_name: submitterName,
+      submitter_email: submitterEmail,
+      submitter_phone: submitterPhone,
+      tracking_token: trackingToken,
     };
 
     const response = await fetch(`${SUPABASE_URL}/rest/v1/fundraiser`, {
@@ -271,13 +311,16 @@ export default async function handler(req, res) {
 
     lastErrorText = await response.text();
     const isSlugCollision = lastErrorText.includes('fundraiser_slug_key') || lastErrorText.includes('23505');
+    const isTokenCollision = lastErrorText.includes('fundraiser_tracking_token_key');
     logStage(
       'fundraiser insert',
       `Attempt ${attempt}/${MAX_SLUG_ATTEMPTS} failed — HTTP ${response.status}` +
-        (isSlugCollision ? ' (slug collision — retrying with a new slug).' : '.'),
+        (isSlugCollision ? ' (slug collision — retrying with a new slug).' : '') +
+        (isTokenCollision ? ' (tracking token collision — retrying with a new token).' : '') +
+        (!isSlugCollision && !isTokenCollision ? '.' : ''),
       lastErrorText
     );
-    if (!isSlugCollision) break;
+    if (!isSlugCollision && !isTokenCollision) break;
   }
 
   if (!created) {
@@ -350,5 +393,6 @@ export default async function handler(req, res) {
   return res.status(201).json({
     success: true,
     message: 'Thank you! Your campaign has been submitted and is pending review by our team.',
+    trackingUrl: `/track.html?token=${encodeURIComponent(trackingToken)}`,
   });
 }
