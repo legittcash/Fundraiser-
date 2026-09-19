@@ -354,6 +354,7 @@
           <th>Donors</th>
           <th>Status</th>
           <th>Beneficiary</th>
+          <th>Submitted By</th>
           <th>Primary Phone</th>
           <th>Secondary Phone</th>
           <th>Created</th>
@@ -361,7 +362,7 @@
         </tr>
       </thead>
       <tbody id="campaignTableBody">
-        <tr><td colspan="11" class="status-msg">Loading campaigns...</td></tr>
+        <tr><td colspan="12" class="status-msg">Loading campaigns...</td></tr>
       </tbody>
     </table>
   </div>
@@ -758,7 +759,7 @@
       if (!res.ok) {
         const message = await describeFailedResponse(res, 'Loading campaigns');
         showDashboardError(`Could not load campaigns: ${message}`);
-        campaignTableBody.innerHTML = `<tr><td colspan="11" class="status-msg">Could not load campaigns: ${escapeHtml(message)}</td></tr>`;
+        campaignTableBody.innerHTML = `<tr><td colspan="12" class="status-msg">Could not load campaigns: ${escapeHtml(message)}</td></tr>`;
         return;
       }
       const data = await res.json();
@@ -770,7 +771,7 @@
       console.error('Failed to load campaigns:', err);
       const message = err.message || 'Network error.';
       showDashboardError(`Could not load campaigns: ${message}`);
-      campaignTableBody.innerHTML = `<tr><td colspan="11" class="status-msg">Could not load campaigns: ${escapeHtml(message)}</td></tr>`;
+      campaignTableBody.innerHTML = `<tr><td colspan="12" class="status-msg">Could not load campaigns: ${escapeHtml(message)}</td></tr>`;
     }
   }
 
@@ -825,7 +826,7 @@
 
   function renderCampaignTable(campaigns) {
     if (campaigns.length === 0) {
-      campaignTableBody.innerHTML = '<tr><td colspan="11" class="status-msg">No campaigns in this tab yet.</td></tr>';
+      campaignTableBody.innerHTML = '<tr><td colspan="12" class="status-msg">No campaigns in this tab yet.</td></tr>';
       return;
     }
 
@@ -855,6 +856,26 @@
       } else {
         statusActionsHtml = `<button onclick="toggleArchive(${c.id}, '${c.status}')">${c.status === 'active' ? 'Archive' : 'Reactivate'}</button>`;
       }
+      // A live campaign's public link is worth copying straight from
+      // the table — the admin doesn't need to open Edit just to grab
+      // it. Only shown for 'active' campaigns, since anything else has
+      // no working public page yet (or no longer does).
+      if (c.status === 'active' && c.slug) {
+        statusActionsHtml += `<button onclick="copyPublicLink('${escapeJs(c.slug)}')">Copy Public Link</button>`;
+      }
+
+      // Submitter contact details only exist for visitor-submitted
+      // campaigns (api/submit-campaign.js) — campaigns created directly
+      // by an admin have no submitter_name on file. These three fields
+      // are ONLY ever rendered here, inside the authenticated admin
+      // dashboard — never on any public page.
+      const submittedByHtml = c.submitter_name
+        ? `
+          <div>${escapeHtml(c.submitter_name)}</div>
+          ${c.submitter_phone ? `<div class="muted-cell">${escapeHtml(c.submitter_phone)}</div>` : ''}
+          ${c.submitter_email ? `<div class="muted-cell">${escapeHtml(c.submitter_email)}</div>` : ''}
+        `
+        : '<span class="muted-cell">— (admin-created)</span>';
 
       return `
       <tr>
@@ -868,6 +889,7 @@
         <td>${c.donor_count}</td>
         <td><span class="badge ${c.status}">${c.status}</span></td>
         <td class="nowrap">${beneficiaryCell}</td>
+        <td class="nowrap">${submittedByHtml}</td>
         <td class="nowrap">${c.phone_number ? escapeHtml(c.phone_number) : '<span class="muted-cell">—</span>'}</td>
         <td class="nowrap">${c.secondary_phone_number ? escapeHtml(c.secondary_phone_number) : '<span class="muted-cell">—</span>'}</td>
         <td class="nowrap muted-cell">${createdDate}</td>
@@ -1059,12 +1081,22 @@
   };
 
   window.rejectCampaign = async function (id, patientName) {
-    if (!confirm(`Reject ${patientName}'s submission? It will not be published.`)) return;
+    // A rejection reason is shown to the visitor on their private
+    // tracking page (track.html), so ask for one here. Cancelling the
+    // prompt cancels the whole rejection — only an empty (but
+    // confirmed) reason falls back to a default, handled server-side
+    // in api/admin/campaigns.js.
+    const reason = prompt(
+      `Reject ${patientName}'s submission?\n\nOptional: enter a reason the submitter will see on their tracking page (leave blank for a generic message).`,
+      ''
+    );
+    if (reason === null) return; // cancelled
+
     try {
       const res = await fetch(`/api/admin/campaigns?id=${id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: 'rejected' }),
+        body: JSON.stringify({ status: 'rejected', rejection_reason: reason.trim() }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -1076,6 +1108,29 @@
     } catch (err) {
       console.error(err);
       alert('Something went wrong.');
+    }
+  };
+
+  // Copies the full public campaign URL to the clipboard for an active
+  // campaign, using the site's own existing URL structure
+  // (/campaign.html?slug=...) — same pattern used everywhere else on
+  // the site for linking to a public campaign page.
+  window.copyPublicLink = async function (slug) {
+    const publicUrl = `${window.location.origin}/campaign.html?slug=${encodeURIComponent(slug)}`;
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(publicUrl);
+      } else {
+        const tmp = document.createElement('textarea');
+        tmp.value = publicUrl;
+        document.body.appendChild(tmp);
+        tmp.select();
+        document.execCommand('copy');
+        document.body.removeChild(tmp);
+      }
+      alert('Public campaign link copied to clipboard:\n' + publicUrl);
+    } catch (err) {
+      alert('Could not copy automatically. Here is the link:\n' + publicUrl);
     }
   };
 
