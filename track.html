@@ -100,6 +100,29 @@
   }
   a.primary-btn:hover { background: var(--pink-dark); }
 
+  .copy-link-btn {
+    display: block;
+    width: 100%;
+    background: #fff;
+    color: var(--pink-dark);
+    border: 1.5px solid var(--pink);
+    padding: 12px;
+    font-size: 0.9rem;
+    font-weight: 700;
+    border-radius: 12px;
+    margin-top: 18px;
+    cursor: pointer;
+    box-sizing: border-box;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .copy-link-btn:hover { background: #fff0f6; }
+  .copy-link-btn:active { background: #ffe4ef; }
+  .copy-link-btn.copied {
+    background: #f0fdf4;
+    border-color: #16a34a;
+    color: #166534;
+  }
+
   .error-icon { color: #dc2626; }
 </style>
 </head>
@@ -126,6 +149,7 @@
       <p class="submitted-date" id="submittedDate"></p>
       <span class="status-badge" id="statusBadge"></span>
       <div class="message-box" id="messageBox"></div>
+      <button type="button" class="copy-link-btn" id="copyPublicLinkBtn" style="display:none;">Copy Public Campaign Link</button>
       <a class="primary-btn" id="publicLinkBtn" style="display:none;" href="#">View Public Campaign Page</a>
     </div>
   </div>
@@ -162,7 +186,14 @@
     const badge = document.getElementById('statusBadge');
     const messageBox = document.getElementById('messageBox');
     const publicLinkBtn = document.getElementById('publicLinkBtn');
+    const copyPublicLinkBtn = document.getElementById('copyPublicLinkBtn');
     const status = data.status || 'pending';
+
+    // Reset the copy button each time a result renders, so a stale
+    // "✓ Copied!" state never lingers from a previous status.
+    copyPublicLinkBtn.style.display = 'none';
+    copyPublicLinkBtn.classList.remove('copied');
+    copyPublicLinkBtn.textContent = 'Copy Public Campaign Link';
 
     badge.className = 'status-badge ' + status;
 
@@ -175,8 +206,13 @@
       messageBox.className = 'message-box approved-box';
       messageBox.textContent = 'Great news — your campaign has been approved and is now live! You can view and share the public campaign page below.';
       if (data.public_url) {
+        // Same public campaign URL the "View Public Campaign Page"
+        // button already uses — never the private tracking link/token.
+        const fullPublicUrl = new URL(data.public_url, window.location.origin).toString();
         publicLinkBtn.href = data.public_url;
         publicLinkBtn.style.display = 'inline-block';
+        copyPublicLinkBtn.style.display = 'block';
+        copyPublicLinkBtn.onclick = () => copyPublicLink(fullPublicUrl, copyPublicLinkBtn);
       }
     } else if (status === 'rejected') {
       badge.textContent = 'Not Approved';
@@ -191,6 +227,59 @@
       messageBox.className = 'message-box';
       messageBox.textContent = 'Current status: ' + status;
     }
+  }
+
+  // Copies the public campaign URL (never the private tracking token)
+  // to the clipboard, with a fallback for browsers/contexts where the
+  // async Clipboard API isn't available (older Android WebViews, non-
+  // HTTPS contexts, etc.), and a brief "✓ Public Link Copied!"
+  // confirmation on the button itself.
+  async function copyPublicLink(url, btn) {
+    let copied = false;
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(url);
+        copied = true;
+      }
+    } catch (err) {
+      copied = false;
+    }
+
+    if (!copied) {
+      try {
+        const tempInput = document.createElement('textarea');
+        tempInput.value = url;
+        tempInput.setAttribute('readonly', '');
+        tempInput.style.position = 'fixed';
+        tempInput.style.top = '-1000px';
+        tempInput.style.left = '-1000px';
+        document.body.appendChild(tempInput);
+        tempInput.focus();
+        tempInput.select();
+        tempInput.setSelectionRange(0, url.length); // needed for iOS/Android
+        copied = document.execCommand('copy');
+        document.body.removeChild(tempInput);
+      } catch (err) {
+        copied = false;
+      }
+    }
+
+    const originalText = 'Copy Public Campaign Link';
+    if (copied) {
+      btn.textContent = '✓ Public Link Copied!';
+      btn.classList.add('copied');
+    } else {
+      // Last resort — clipboard access was blocked entirely. Prompt
+      // lets the user manually copy the exact same public URL.
+      window.prompt('Copy this link:', url);
+      btn.textContent = originalText;
+      return;
+    }
+
+    setTimeout(() => {
+      btn.textContent = originalText;
+      btn.classList.remove('copied');
+    }, 2500);
   }
 
   async function loadStatus() {
