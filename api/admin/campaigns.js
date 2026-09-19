@@ -532,6 +532,20 @@ export default async function handler(req, res) {
       if (updates.status && !['active', 'archived', 'pending', 'rejected'].includes(updates.status)) {
         return res.status(400).json({ error: 'Status must be "active", "archived", "pending", or "rejected".' });
       }
+
+      // Rejecting a visitor submission: save the admin's reason (or a
+      // sensible default when none was given) so the visitor's private
+      // tracking page (api/track-campaign.js) can show WHY. Approving
+      // (status -> 'active') always clears any previous rejection
+      // reason back to null, since it no longer applies — this also
+      // covers a "re-approval" after an earlier rejection.
+      if (updates.status === 'rejected') {
+        const reason = (body.rejection_reason || '').trim();
+        updates.rejection_reason = reason || 'Your submission was not approved at this time.';
+      } else if (updates.status === 'active') {
+        updates.rejection_reason = null;
+      }
+
       if (Object.keys(updates).length === 0) {
         return res.status(400).json({ error: 'No editable fields were provided.' });
       }
