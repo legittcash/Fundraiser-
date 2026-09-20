@@ -56,6 +56,7 @@ import campaignImages from '../../lib/campaign-images.js';
 // that file for why.
 const { uploadCampaignImage, deleteCampaignImage } = campaignImages;
 import { insertBeneficiary } from '../../lib/beneficiary.js';
+import { sendCampaignApprovedEmail, sendCampaignRejectedEmail } from '../../lib/email.js';
 
 function getSupabaseConfig() {
   const SUPABASE_URL = (process.env.SUPABASE_URL || '').replace(/\/+$/, '');
@@ -550,6 +551,27 @@ export default async function handler(req, res) {
         return res.status(400).json({ error: 'No editable fields were provided.' });
       }
 
+      // ---- Look up the campaign's CURRENT status before updating it ----
+      // Needed only to decide whether an approval/rejection email should
+      // be sent (a real status TRANSITION, e.g. pending -> active), never
+      // to change the update logic itself. Saving the same status again
+      // (active -> active, rejected -> rejected) must never re-send an
+      // email — see the duplicate-protection check further below, right
+      // after the update succeeds.
+      let previousStatus = null;
+      if (updates.status) {
+        const statusLookupRes = await fetch(
+          `${SUPABASE_URL}/rest/v1/fundraiser?id=eq.${encodeURIComponent(id)}&select=status`,
+          { headers }
+        );
+        if (statusLookupRes.ok) {
+          const rows = await statusLookupRes.json();
+          previousStatus = rows[0]?.status ?? null;
+        } else {
+          console.warn('Could not look up the campaign\'s previous status before updating it:', await statusLookupRes.text());
+        }
+      }
+
       // ---- IMAGE REPLACEMENT: capture the OLD image first ----
       // If this edit is changing image_url, the admin dashboard has
       // already uploaded the NEW photo to Storage by this point (that
@@ -605,6 +627,47 @@ export default async function handler(req, res) {
           );
           imageCleanupWarning =
             'Campaign updated, but the old photo could not be removed from storage automatically. It may need manual cleanup.';
+        }
+      }
+
+      // ---- Email notifications on a REAL status transition only ----
+      // (best-effort, never blocks or alters this endpoint's response).
+      // "previousStatus" was captured BEFORE this update, above — so
+      // active -> active or rejected -> rejected (saving the same
+      // status again) never re-sends an email, while pending -> active,
+      // rejected -> active, pending -> rejected, and active -> rejected
+      // all correctly send exactly one.
+      const updatedCampaign = updated[0];
+      const newStatus = updates.status;
+      if (newStatus && newStatus !== previousStatus && updatedCampaign.submitter_email) {
+        try {
+          if (newStatus === 'active') {
+            const emailResult = await sendCampaignApprovedEmail({
+              to: updatedCampaign.submitter_email,
+              submitterName: updatedCampaign.submitter_name,
+              patientName: updatedCampaign.patient_name,
+              slug: updatedCampaign.slug,
+            });
+            if (!emailResult.ok && !emailResult.skipped) {
+              console.error(`[email] Approval email failed to send for fundraiser ${id}.`, emailResult.error);
+            }
+          } else if (newStatus === 'rejected') {
+            const emailResult = await sendCampaignRejectedEmail({
+              to: updatedCampaign.submitter_email,
+              submitterName: updatedCampaign.submitter_name,
+              patientName: updatedCampaign.patient_name,
+              trackingToken: updatedCampaign.tracking_token,
+              rejectionReason: updatedCampaign.rejection_reason,
+            });
+            if (!emailResult.ok && !emailResult.skipped) {
+              console.error(`[email] Rejection email failed to send for fundraiser ${id}.`, emailResult.error);
+            }
+          }
+        } catch (err) {
+          // Should be unreachable — the email helpers already catch
+          // their own errors — but this is the last line of defense
+          // against email ever breaking a successful approve/reject.
+          console.error(`[email] Unexpected error sending status-change email for fundraiser ${id}.`, err?.message || err);
         }
       }
 
