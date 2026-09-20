@@ -4,5 +4,8 @@
   "type": "module",
   "engines": {
     "node": ">=18"
+  },
+  "dependencies": {
+    "resend": "^6.28.1"
   }
 }
