@@ -49,6 +49,7 @@ import campaignImages from '../lib/campaign-images.js';
 // that file for why.
 const { uploadCampaignImage, deleteCampaignImage } = campaignImages;
 import { insertBeneficiary } from '../lib/beneficiary.js';
+import { sendSubmissionReceivedEmail } from '../lib/email.js';
 
 function getSupabaseConfig() {
   const SUPABASE_URL = (process.env.SUPABASE_URL || '').replace(/\/+$/, '');
@@ -388,6 +389,31 @@ export default async function handler(req, res) {
       error: 'Something went wrong saving your payout details. Please try again, or contact support with the reference code below.',
       reference: ref,
     });
+  }
+
+  // ---- Email 1: "Submission Received" (best-effort, never blocks) ----
+  // Sent only when a valid submitter_email was actually provided —
+  // otherwise silently skipped (sendSubmissionReceivedEmail's own
+  // validation handles that). This can NEVER turn an already-successful
+  // submission into a failed one: any error here is caught and logged,
+  // and the response below is returned exactly the same either way.
+  if (submitterEmail) {
+    try {
+      const emailResult = await sendSubmissionReceivedEmail({
+        to: submitterEmail,
+        submitterName,
+        patientName: campaign.patient_name,
+        trackingToken,
+      });
+      if (!emailResult.ok && !emailResult.skipped) {
+        logStage('email', `Submission-received email failed to send for fundraiser ${campaign.id}.`, emailResult.error);
+      }
+    } catch (err) {
+      // Should be unreachable — sendSubmissionReceivedEmail already
+      // catches its own errors — but this is the last line of defense
+      // against email ever breaking a successful submission.
+      logStage('email', `Unexpected error sending submission-received email for fundraiser ${campaign.id}.`, err?.message || err);
+    }
   }
 
   return res.status(201).json({
