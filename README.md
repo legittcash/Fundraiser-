@@ -470,7 +470,8 @@ few seconds later the totals and Recent Donors list update.
 ```
 patient-fundraiser/
 ├── package.json                     # "type": "module" — declares the whole project as ES Modules,
-│                                    # so Vercel's build/bundling has no ESM/CommonJS ambiguity to resolve
+│                                    # so Vercel's build/bundling has no ESM/CommonJS ambiguity to resolve.
+│                                    # Also lists the "resend" package (Vercel runs `npm install` automatically).
 ├── index.html                      # Public homepage: Jiji-style campaign cards, search,
 │                                    # "+ Start a Fundraiser" button
 ├── campaign.html                   # Public campaign details page — donate button calls
@@ -500,8 +501,11 @@ patient-fundraiser/
 │   │                                   # used by both the admin combined creation form and
 │   │                                   # the public visitor submission endpoint — always starts
 │   │                                   # fully inert (pending/disabled/no subaccount)
-│   └── paystack.js                    # Shared helper: List Banks / Resolve Account / Create & Update
-│                                       # Subaccount / Initialize Transaction (server-side checkout)
+│   ├── paystack.js                    # Shared helper: List Banks / Resolve Account / Create & Update
+│   │                                   # Subaccount / Initialize Transaction (server-side checkout)
+│   └── email.js                       # Shared helper: sends the 3 transactional emails via Resend
+│                                       # (submission received / approved / rejected) — server-side
+│                                       # only, RESEND_API_KEY never touches the browser
 ├── api/                              # 11 files total = 11 Vercel Serverless Functions
 │   ├── campaigns.js                   # Public: list active campaigns (+ search) — explicit column list
 │   ├── campaign.js                    # Public: fetch one campaign by slug — explicit column list,
@@ -645,10 +649,123 @@ How it works, end to end:
 | `ADMIN_USERNAME` | `api/admin/auth.js` (login) | **Yes** |
 | `ADMIN_PASSWORD` | `api/admin/auth.js` (login) | **Yes** |
 | `ADMIN_SESSION_SECRET` | `lib/admin-auth.js` — signs login sessions | **Yes** |
+| `RESEND_API_KEY` | `lib/email.js` — sends all transactional emails | **Yes** |
+| `RESEND_FROM_EMAIL` | `lib/email.js` — the "from" address on outgoing emails | No, but kept server-side anyway |
+| `SITE_URL` | `lib/email.js` — builds absolute tracking/public campaign links inside emails | No, but kept server-side anyway |
 
-**No new Vercel environment variables are required** for this update —
-platform fee and settlement logic reuse the existing
-`PAYSTACK_SECRET_KEY` and Supabase credentials.
+**No new Vercel environment variables are required for the platform fee
+and settlement logic** — that reuses the existing `PAYSTACK_SECRET_KEY`
+and Supabase credentials. **Three new environment variables are
+required for email notifications** — see "Email Notifications" below.
+
+---
+
+## Email Notifications
+
+The project sends three transactional emails using
+[Resend](https://resend.com), all triggered automatically by existing
+actions — nothing new for a visitor or admin to click:
+
+| Email | Sent when | Trigger |
+|---|---|---|
+| **Submission Received** | A visitor submits a campaign and provided a valid email address | `api/submit-campaign.js`, right after the campaign is created as `'pending'` |
+| **Fundraiser Approved** | A campaign's status transitions to `'active'` (from any other status) | `api/admin/campaigns.js` PATCH handler, only on a real transition |
+| **Submission Update (Rejected)** | A campaign's status transitions to `'rejected'` (from any other status) | `api/admin/campaigns.js` PATCH handler, only on a real transition |
+
+Email is entirely **optional and best-effort**: a submitter who leaves
+the email field blank simply never receives any of these, and the
+fundraiser submission/approval/rejection itself always succeeds exactly
+as before whether or not the email actually sends. See
+"Failure handling" below.
+
+### 1. Create a Resend account
+Sign up at [resend.com](https://resend.com) — the free tier is enough
+for this project's current volume of transactional emails (submission
+confirmations plus approval/rejection notices).
+
+### 2. Create a Resend API key
+In the Resend dashboard, go to **API Keys** → **Create API Key**. Give
+it a name (e.g. "Lucy Fundraiser production") and copy the key — you
+won't be able to see it again after leaving the page.
+
+### 3. Add `RESEND_API_KEY` to Vercel Environment Variables
+Vercel project → **Settings** → **Environment Variables** → add:
+- **Key:** `RESEND_API_KEY`
+- **Value:** the API key you just copied
+- **Environment:** Production (and Preview/Development if you use them)
+
+### 4. Add `RESEND_FROM_EMAIL`
+This is the "from" address emails are sent from. Add:
+- **Key:** `RESEND_FROM_EMAIL`
+- **Value (example, works immediately with no setup):**
+  `Lucy Fundraiser <onboarding@resend.dev>`
+
+`onboarding@resend.dev` is Resend's own shared sending address — it
+works right away with zero domain configuration, which is exactly what
+`lib/email.js` falls back to automatically if `RESEND_FROM_EMAIL` isn't
+set at all. When you're ready to send from your own domain (e.g.
+`notifications@lucyfundraiser.org`), verify that domain in Resend's
+dashboard, then just change this one environment variable — no code
+changes are needed anywhere, since every email function in
+`lib/email.js` reads the sender address from this variable at send
+time.
+
+### 5. Optionally add `SITE_URL`
+Used to build the absolute tracking and public-campaign links inside
+emails (a relative link like `/track.html?token=...` doesn't mean
+anything inside an email client). Defaults to
+`https://fundraiser-bice.vercel.app/` if not set, so this is only
+necessary if you deploy to a different domain:
+- **Key:** `SITE_URL`
+- **Value:** `https://fundraiser-bice.vercel.app/`
+
+### 6. Redeploy
+After adding these environment variables, trigger a new Vercel
+deployment (push a commit, or use **Deployments** → **Redeploy**) so
+the serverless functions pick up the new values.
+
+### Failure handling
+Email sending can never break the fundraiser system. Specifically:
+- If a visitor submits a campaign successfully but Resend fails (bad
+  API key, Resend outage, network error, etc.), **the campaign is still
+  created** and **the tracking link is still returned** to the visitor
+  exactly as before — the error is only logged server-side (visible in
+  Vercel's function logs) via a `[email:...]` prefixed message.
+- If an admin approves or rejects a campaign but Resend fails, **the
+  status change and rejection reason are still saved** exactly as
+  before — again, only a server-side log line records the email
+  failure.
+- If `RESEND_API_KEY` isn't set at all, every email function in
+  `lib/email.js` detects that, logs a clear one-line warning, and skips
+  sending — the rest of the system (submissions, approvals, rejections,
+  tracking) works completely normally with no emails going out.
+
+### Duplicate-email protection
+The approval and rejection emails are only sent on an actual status
+**transition**, determined by looking up the campaign's status
+immediately before applying the update:
+- `pending → active` and `rejected → active` both send the approval email.
+- `pending → rejected` and `active → rejected` both send the rejection email.
+- `active → active` (re-saving the same status, e.g. editing other
+  fields on an already-active campaign) does **not** re-send an
+  approval email.
+- `rejected → rejected` (e.g. an admin edits the rejection reason on an
+  already-rejected campaign) does **not** re-send a rejection email.
+
+### Privacy & security
+- `RESEND_API_KEY` only ever exists as a server-side environment
+  variable, read inside `lib/email.js`. It is never sent to the
+  browser, never included in any API response, and never logged.
+- Tracking and public campaign URLs inside emails are always built
+  **server-side**, from the campaign's own `tracking_token`/`slug`
+  already stored in the database, using the server's own `SITE_URL` —
+  never from anything the browser sends.
+- The "Fundraiser Approved" email always uses the **public** campaign
+  URL (`/campaign.html?slug=...`); it never includes the private
+  tracking token. The "Submission Received" and "Submission Update
+  (Rejected)" emails always use the **private tracking** URL
+  (`/track.html?token=...`); neither ever includes the public campaign
+  link, since the campaign either isn't live yet or was never approved.
 
 ---
 
@@ -1106,6 +1223,61 @@ Run `supabase-tracking.sql` first (see step 4a above), then verify:
    `track.html`'s own page source/network response never includes those
    fields, and that the admin dashboard's "Submitted By" column and
    rejection-reason prompt only appear after logging in.
+
+## Testing checklist — email notifications
+
+Make sure `RESEND_API_KEY` and `RESEND_FROM_EMAIL` are set in Vercel
+(see "Email Notifications" above) and redeployed before testing.
+
+1. **Submit a campaign with an email address.**
+   Fill out `submit-campaign.html` completely, including a real email
+   address you can check, and submit.
+   **Expected:** the submission succeeds normally; the tracking link
+   appears on screen with working Copy/Open buttons; a
+   "Your Fundraiser Submission Has Been Received" email arrives at that
+   address within a minute or two; the **Track Your Submission** button
+   and the plain-text link in that email both open `track.html` showing
+   "Pending Review" for the correct patient name.
+
+2. **Approve that campaign from admin.**
+   Log into `admin/dashboard.html` → **Pending Review** → **Approve**
+   the campaign from step 1.
+   **Expected:** the campaign moves to the **Active** tab and appears on
+   the public homepage; a "Your Fundraiser Has Been Approved" email
+   arrives; the **View Public Campaign** button and the plain-text link
+   in that email both open the correct live `campaign.html?slug=...`
+   page — not `track.html` and not the tracking token.
+
+3. **Submit another campaign with an email, then reject it with a reason.**
+   Submit a second test campaign with a valid email. In the dashboard,
+   click **Reject**, and type a specific reason (e.g. "Missing hospital
+   documentation") into the prompt.
+   **Expected:** the campaign moves to the **Rejected** tab; an
+   "Update on Your Fundraiser Submission" email arrives containing that
+   **exact** rejection reason; its **Track Your Submission** button and
+   plain-text link both open `track.html` showing "Not Approved" and
+   the same reason — no public campaign link appears anywhere in this
+   email.
+
+4. **Approve an already-approved campaign again, if the UI allows it.**
+   With the campaign from step 2 still `active`, edit and save it again
+   from the dashboard (e.g. re-save it with `status` still `active`, or
+   edit an unrelated field like the story text).
+   **Expected:** the save succeeds normally, but **no** second approval
+   email arrives — check your inbox and, if useful, the Vercel function
+   logs for `api/admin/campaigns` to confirm no `sendCampaignApprovedEmail`
+   attempt was made for this save (the log would only show the earlier
+   [email:campaign-approved] line from step 2, not a new one).
+
+**If an email doesn't arrive:** check the Vercel function logs for
+`api/submit-campaign` or `api/admin/campaigns` for a line starting with
+`[email:...]` — it will explain exactly why (missing `RESEND_API_KEY`,
+no/invalid submitter email on that campaign, or the specific error
+Resend returned). Also check your spam folder, and confirm
+`RESEND_FROM_EMAIL` is either left unset (using the default
+`onboarding@resend.dev`) or set to a domain/address actually verified
+in your Resend account — Resend will reject sends from an unverified
+custom domain.
 
 ## Notes for beginners
 - GitHub, Supabase, and Vercel all work through their websites in Chrome
