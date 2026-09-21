@@ -13,11 +13,12 @@
 // frontend JavaScript to accidentally leak. Email is never included in
 // this response at all, public or private.
 //
-// This response DOES include the gross amount, Paystack fee, and net
-// amount for each donation — that breakdown isn't sensitive (it doesn't
-// identify the donor or expose any secret), and showing it is what lets
-// the public campaign page be transparent about how much of a donation
-// actually reaches the campaign after payment processing costs.
+// This response DOES include the gross amount, Paystack fee, platform
+// fee, and net amount for each donation — that breakdown isn't
+// sensitive (it doesn't identify the donor or expose any secret), and
+// showing it is what lets the public campaign page be transparent about
+// how much of a donation actually reaches the campaign after payment
+// processing costs.
 
 export default async function handler(req, res) {
   if (req.method !== 'GET') {
@@ -44,7 +45,7 @@ export default async function handler(req, res) {
     // Only select the columns we're willing to make public. donor_email
     // is deliberately never selected here.
     const response = await fetch(
-      `${SUPABASE_URL}/rest/v1/donations?select=donor_name,anonymous,amount,paystack_fee,net_amount,created_at` +
+      `${SUPABASE_URL}/rest/v1/donations?select=donor_name,anonymous,amount,paystack_fee,platform_fee,net_amount,created_at` +
         `&fundraiser_id=eq.${encodeURIComponent(fundraiserId)}` +
         `&order=created_at.desc&limit=${limit}`,
       {
@@ -69,6 +70,15 @@ export default async function handler(req, res) {
       display_name: row.anonymous || !row.donor_name ? 'Anonymous' : row.donor_name,
       amount: row.amount, // gross amount the donor paid
       paystack_fee: row.paystack_fee,
+      // The ACTUAL platform fee charged on this specific donation, as
+      // recorded at the moment it was processed (see
+      // api/paystack-webhook.js) — this already reflects whether the
+      // platform-fee switch was on AND this campaign's beneficiary was
+      // eligible to collect it AT THE TIME, which is more accurate for
+      // a past donation than re-checking the campaign's CURRENT status
+      // (which could have changed since). 0/null means no platform fee
+      // was charged on this donation.
+      platform_fee: row.platform_fee,
       net_amount: row.net_amount,
       created_at: row.created_at,
     }));
