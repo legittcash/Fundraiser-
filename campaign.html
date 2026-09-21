@@ -52,10 +52,15 @@
     overflow: hidden;
   }
 
+  /* Matches the 5:6 portrait shape used for campaign photos on the
+     homepage. object-fit is CONTAIN here (not cover) so the entire
+     uploaded photo, including the patient's face, always stays fully
+     visible — nothing is ever cropped. Any empty space is filled by
+     the background color instead of cutting into the photo. */
   .hero-img {
     width: 100%;
-    height: 260px;
-    object-fit: cover;
+    aspect-ratio: 5 / 6;
+    object-fit: contain;
     display: block;
     background: #f0f0f3;
   }
@@ -205,6 +210,46 @@
     border-radius: 10px;
     font-size: 1rem;
     margin-bottom: 10px;
+  }
+
+  /* Live, pre-payment fee transparency breakdown — shown as soon as the
+     donor types a valid amount, updated on every keystroke. Numbers are
+     never hard-coded; see updateFeeBreakdown() in the script below. */
+  .fee-breakdown {
+    display: none;
+    background: #f9fafb;
+    border-radius: 12px;
+    padding: 12px 14px 10px;
+    margin: -2px 0 14px;
+  }
+
+  .fee-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 10px;
+    padding: 4px 0;
+    font-size: 0.85rem;
+    color: var(--text-muted);
+  }
+
+  .fee-row span:first-child { flex: 1; }
+  .fee-row span:last-child { white-space: nowrap; font-variant-numeric: tabular-nums; }
+
+  .fee-row-net {
+    border-top: 1px solid #e5e7eb;
+    margin-top: 4px;
+    padding-top: 9px;
+    font-weight: 700;
+    font-size: 0.94rem;
+    color: var(--green);
+  }
+
+  .fee-note {
+    margin: 8px 0 0;
+    font-size: 0.72rem;
+    color: var(--text-muted);
+    line-height: 1.4;
   }
 
   .status-msg {
@@ -428,6 +473,28 @@
 
               <label for="donorAmount">Amount to donate (₦)</label>
               <input type="number" id="donorAmount" placeholder="e.g. 500" min="100" required />
+
+              <!-- Live fee transparency breakdown — filled in and shown by
+                   updateFeeBreakdown() as soon as a valid amount is typed -->
+              <div class="fee-breakdown" id="feeBreakdown">
+                <div class="fee-row">
+                  <span>Donation amount</span>
+                  <span id="feeRowDonation">₦0</span>
+                </div>
+                <div class="fee-row">
+                  <span>Payment processing fee</span>
+                  <span id="feeRowProcessing">₦0</span>
+                </div>
+                <div class="fee-row">
+                  <span>Platform maintenance fee</span>
+                  <span id="feeRowPlatform">₦0</span>
+                </div>
+                <div class="fee-row fee-row-net">
+                  <span>Campaign received</span>
+                  <span id="feeRowNet">₦0</span>
+                </div>
+                <p class="fee-note" id="feeNote"></p>
+              </div>
             </div>
 
             <button class="donate-btn" id="donateBtn">Donate Now 💗</button>
@@ -617,10 +684,101 @@
     for "did this payment really succeed".
   */
 
+  /*
+    =========================================================
+    FEE TRANSPARENCY — live, pre-payment breakdown
+    =========================================================
+    Shows the donor exactly what the ₦20,000-style breakdown in the
+    project brief describes, using real, dynamically computed numbers
+    only (nothing here is ever hard-coded):
+
+      Donation amount              ₦20,000
+      Payment processing fee         ₦175
+      Platform maintenance fee        ₦50
+      Campaign received            ₦19,775
+
+    PLATFORM MAINTENANCE FEE — reuses the EXACT same formula
+    api/initialize-donation.js already uses server-side (1% of the
+    donation, capped at ₦1,000 — see PLATFORM_FEE_RATE /
+    PLATFORM_FEE_CAP_NAIRA there), and only shows a non-zero fee when
+    campaign.platform_fee_applicable is true — i.e. when the admin's
+    platform-fee switch is on AND this campaign currently has a
+    verified, settlement-enabled beneficiary that a fee could actually
+    be collected through (api/campaign.js computes that flag using the
+    identical conditions api/initialize-donation.js itself checks at
+    checkout, so this preview can never show a fee that checkout
+    wouldn't actually charge, or hide one it would).
+
+    PAYMENT PROCESSING FEE — this is Paystack's own transaction fee.
+    IMPORTANT: this project has never calculated that fee anywhere
+    ahead of time — the real figure is only known once Paystack
+    actually processes the payment (api/paystack-webhook.js reads it
+    straight from Paystack's own "fees" field on the charge.success
+    event; see that file's FEE ACCOUNTING comment). To still give the
+    donor an honest, non-hard-coded number before they pay, this uses
+    Paystack's own published standard rate for Nigerian bank cards
+    (1.5% + ₦100, waived under ₦2,500, capped at ₦2,000) as an
+    ESTIMATE — flagged as such in the small note under the breakdown.
+    This does not change, replace, or duplicate the real fee
+    accounting anywhere else in the app; the donor's "Recent Donors"
+    entry after payment still shows Paystack's ACTUAL reported fee,
+    exactly as it always has.
+  */
+  const PLATFORM_FEE_RATE_PREVIEW = 0.01; // 1% — same rate as api/initialize-donation.js
+  const PLATFORM_FEE_CAP_NAIRA_PREVIEW = 1000; // ₦1,000 cap — same as api/initialize-donation.js
+
+  function estimateProcessingFee(amount) {
+    if (!amount || amount <= 0) return 0;
+    let fee = amount * 0.015;
+    if (amount >= 2500) fee += 100; // Paystack waives the flat ₦100 below this threshold
+    fee = Math.min(fee, 2000); // Paystack's own published cap
+    return Math.round(fee);
+  }
+
+  function computePlatformFeePreview(amount, applicable) {
+    if (!applicable || !amount || amount <= 0) return 0;
+    return Math.min(Math.round(amount * PLATFORM_FEE_RATE_PREVIEW), PLATFORM_FEE_CAP_NAIRA_PREVIEW);
+  }
+
+  function nairaFmt(n) {
+    return `₦${Math.max(0, Math.round(n)).toLocaleString()}`;
+  }
+
+  function updateFeeBreakdown(campaign) {
+    const feeBreakdown = document.getElementById('feeBreakdown');
+    const amount = Number(document.getElementById('donorAmount').value);
+
+    if (!amount || amount <= 0) {
+      feeBreakdown.style.display = 'none';
+      return;
+    }
+
+    const processingFee = estimateProcessingFee(amount);
+    const platformFeeApplicable = campaign.platform_fee_applicable === true;
+    const platformFee = computePlatformFeePreview(amount, platformFeeApplicable);
+    const netAmount = Math.max(0, amount - processingFee - platformFee);
+
+    document.getElementById('feeRowDonation').textContent = nairaFmt(amount);
+    document.getElementById('feeRowProcessing').textContent = nairaFmt(processingFee);
+    document.getElementById('feeRowPlatform').textContent = nairaFmt(platformFee);
+    document.getElementById('feeRowNet').textContent = nairaFmt(netAmount);
+    document.getElementById('feeNote').textContent = campaign.platform_fee_enabled && !platformFeeApplicable
+      ? 'Payment processing fee is Paystack\'s standard rate, estimated here and confirmed after payment. Platform maintenance fee is currently ₦0 for this campaign.'
+      : 'Payment processing fee is Paystack\'s standard rate, estimated here and confirmed after payment.';
+
+    feeBreakdown.style.display = 'block';
+  }
+
   function attachDonateHandler(campaign) {
     const donateBtn = document.getElementById('donateBtn');
     const statusMsg = document.getElementById('statusMsg');
     const donorNameError = document.getElementById('donorNameError');
+    const donorAmountInput = document.getElementById('donorAmount');
+
+    // Recalculate and redraw the breakdown on every keystroke so it
+    // always reflects the amount currently in the box.
+    donorAmountInput.addEventListener('input', () => updateFeeBreakdown(campaign));
+    updateFeeBreakdown(campaign); // covers a pre-filled amount, if any
 
     donateBtn.addEventListener('click', async () => {
       const donorName = document.getElementById('donorName').value.trim();
@@ -648,7 +806,7 @@
         return;
       }
 
-      if (!Number.isFinite(amount) || amount < 100) {
+      if (!amount || amount < 100) {
         statusMsg.textContent = 'Minimum donation is ₦100.';
         statusMsg.className = 'status-msg error';
         return;
