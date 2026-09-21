@@ -9,6 +9,7 @@
   :root {
     --pink: #ff2e88;
     --pink-dark: #e0217a;
+    --navy: #14213d;
     --green: #22c55e;
     --bg: #f6f7fb;
     --card-bg: #ffffff;
@@ -31,6 +32,54 @@
     margin: 0 auto;
   }
 
+  /* ==========================================================
+     ORGANIZATION HEADER — KODEP text logo, upper left, with the
+     organization name and location stacked beneath it. Pure CSS,
+     no image file, kept compact so the header never eats into
+     the campaign list below.
+     ========================================================== */
+  .site-header {
+    margin-bottom: 18px;
+  }
+
+  .kodep-logo-link {
+    display: inline-block;
+    text-decoration: none;
+  }
+
+  .kodep-logotype {
+    display: block;
+    font-size: 1.9rem;
+    font-weight: 800;
+    letter-spacing: 1.5px;
+    line-height: 1;
+  }
+  .kodep-logotype .logo-part-a { color: var(--pink); }
+  .kodep-logotype .logo-part-b { color: var(--navy); }
+
+  .kodep-org-name {
+    display: block;
+    font-size: 0.74rem;
+    font-weight: 700;
+    color: var(--text-dark);
+    letter-spacing: 0.2px;
+    margin-top: 3px;
+    max-width: 260px;
+    line-height: 1.3;
+  }
+
+  .kodep-org-location {
+    display: block;
+    font-size: 0.66rem;
+    color: var(--text-muted);
+    margin-top: 2px;
+  }
+
+  @media (max-width: 360px) {
+    .kodep-logotype { font-size: 1.6rem; }
+    .kodep-org-name { font-size: 0.68rem; max-width: 220px; }
+  }
+
   .page-header {
     text-align: center;
     margin-bottom: 24px;
@@ -51,16 +100,28 @@
   .search-wrap {
     max-width: 420px;
     margin: 20px auto 30px;
+    position: relative;
   }
 
   .search-wrap input {
     width: 100%;
-    padding: 13px 16px;
+    padding: 13px 16px 13px 44px;
     border: 1px solid #e5e7eb;
     border-radius: 999px;
     font-size: 1rem;
     background: #fff;
     box-shadow: 0 2px 10px rgba(0,0,0,0.04);
+  }
+
+  .search-wrap-icon {
+    position: absolute;
+    left: 16px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 19px;
+    height: 19px;
+    color: #6b7280;
+    pointer-events: none;
   }
 
   /* ==========================================================
@@ -91,6 +152,7 @@
 
   .campaign-card {
     background: var(--card-bg);
+    border: 2px solid var(--pink);
     border-radius: 14px;
     box-shadow: 0 4px 14px rgba(0, 0, 0, 0.06);
     overflow: hidden;
@@ -110,18 +172,19 @@
     box-shadow: 0 8px 20px rgba(0, 0, 0, 0.1);
   }
 
-  /* Patient portrait photo.
-     IMPORTANT: object-fit is CONTAIN, not cover — the entire uploaded
-     portrait (including the patient's face) must always stay fully
-     visible. A compact fixed height keeps cards short; if a portrait's
-     aspect ratio doesn't exactly fill this box, the browser simply
-     letterboxes it (empty space, filled by the background color below)
-     rather than cropping any part of the photo. */
+  /* Patient portrait photo — consistent 5:6 portrait aspect ratio on
+     every card, regardless of the uploaded photo's original
+     dimensions. object-fit: cover fills the box without stretching or
+     distorting the photo (no squeezed/stretched faces); object-position
+     centers on the upper-middle of the frame, which is where a
+     portrait's face usually is, so cropping trims from the sides/
+     bottom rather than through the face whenever possible. */
   .campaign-img {
     width: 100%;
-    height: 140px;
-    object-fit: contain;
-    background: #f0f0f3; /* letterbox fill so empty space isn't jarring */
+    aspect-ratio: 5 / 6;
+    object-fit: cover;
+    object-position: center 20%;
+    background: #f0f0f3;
     display: block;
   }
 
@@ -254,15 +317,27 @@
 <body>
 
 <div class="page-wrap">
+  <header class="site-header">
+    <a class="kodep-logo-link" href="index.html" aria-label="KODEP home">
+      <span class="kodep-logotype"><span class="logo-part-a">KOD</span><span class="logo-part-b">EP</span></span>
+      <span class="kodep-org-name">Kidney and Other Disease Eradication Program</span>
+      <span class="kodep-org-location">Enugu State, Nigeria</span>
+    </a>
+  </header>
+
   <div class="page-header">
-    <h1>Patient Fundraising Campaigns</h1>
-    <p>Every donation goes directly toward a real patient's treatment.</p>
+    <h1>Support Patients in Need</h1>
+    <p>Help patients raise funds for critical medical treatment.</p>
   </div>
 
-  <a class="start-fundraiser-btn" href="submit-campaign.html">+ Start a Fundraiser</a>
+  <a class="start-fundraiser-btn" href="submit-campaign.html">+ Add a Patient</a>
 
   <!-- Search box: filters campaigns by patient name -->
   <div class="search-wrap">
+    <svg class="search-wrap-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <circle cx="11" cy="11" r="7"></circle>
+      <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+    </svg>
     <input type="text" id="searchInput" placeholder="Search patients by name..." />
   </div>
 

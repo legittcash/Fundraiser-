@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Start a Fundraiser</title>
+<title>Add a Patient</title>
 <style>
   :root {
     --pink: #ff2e88;
@@ -59,16 +59,29 @@
     padding: 10px 12px;
   }
 
-  label { display: block; font-size: 0.85rem; color: var(--text-muted); margin: 12px 0 6px; }
+  label { display: block; font-size: 0.85rem; font-weight: 700; color: var(--text-muted); margin: 12px 0 6px; }
   input, textarea {
     width: 100%;
     padding: 11px 13px;
-    border: 1px solid #e5e7eb;
+    border: 1px solid #d1d5db;
     border-radius: 10px;
     font-size: 0.95rem;
     font-family: inherit;
   }
   textarea { min-height: 90px; resize: vertical; }
+
+  .search-field-wrap { position: relative; }
+  .search-field-icon {
+    position: absolute;
+    left: 13px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 16px;
+    height: 16px;
+    color: #9ca3af;
+    pointer-events: none;
+  }
+  input.has-search-icon { padding-left: 38px; }
 
   .bank-results {
     display: none;
@@ -208,17 +221,17 @@
   <a class="back-link" href="index.html">&larr; Back to campaigns</a>
 
   <div class="card" id="formCard">
-    <h1>Start a Fundraiser</h1>
+    <h1>Add a Patient</h1>
     <p class="sub">
       Tell us about the patient and where donations should eventually be paid out.
-      Every submission is reviewed by our team before it goes live — it will not be
+      Every submission is reviewed by our team before it goes live. It will not be
       visible to donors until approved.
     </p>
 
     <form id="submitForm">
       <h2 class="section-title">Your Information</h2>
       <p class="privacy-note">
-        🔒 This is about you, the person submitting this campaign — not the patient.
+        🔒 This is about you, the person submitting this campaign, not the patient.
         We use it to send you a private tracking link so you can check on your
         submission. It is never shown publicly.
       </p>
@@ -229,12 +242,12 @@
       <label for="submitterEmail">Your email address (optional)</label>
       <input type="email" id="submitterEmail" placeholder="you@example.com" />
       <p class="privacy-note" style="margin-top:6px;">
-        Optional, but useful — if you provide it, we'll email you a confirmation now
+        Optional, but useful. If you provide it, we'll email you a confirmation now
         and let you know when your campaign's status changes. We won't use it for anything else.
       </p>
 
       <label for="submitterPhone">Your phone number *</label>
-      <input type="tel" id="submitterPhone" placeholder="e.g. 08012345678 or +2348012345678" required />
+      <input type="tel" id="submitterPhone" placeholder="+234..." required />
 
       <h2 class="section-title">Patient / Campaign Information</h2>
 
@@ -258,15 +271,15 @@
       <img class="image-preview" id="imagePreview" alt="Preview" />
 
       <label for="phoneNumber">Primary contact phone *</label>
-      <input type="tel" id="phoneNumber" placeholder="e.g. 08012345678 or +2348012345678" required />
+      <input type="tel" id="phoneNumber" placeholder="+234..." required />
 
       <label for="secondaryPhoneNumber">Secondary phone (optional)</label>
-      <input type="tel" id="secondaryPhoneNumber" placeholder="e.g. 08012345678 or +2348012345678" />
+      <input type="tel" id="secondaryPhoneNumber" placeholder="+234..." />
 
       <h2 class="section-title">Beneficiary / Payout Information</h2>
       <p class="privacy-note">
         🔒 This information is private. It's used only by our team to verify the
-        recipient and set up settlement — it is never shown publicly on the campaign
+        recipient and set up settlement. It is never shown publicly on the campaign
         page or anywhere else on the site.
       </p>
 
@@ -274,7 +287,13 @@
       <input type="text" id="benefName" placeholder="Name on the bank account" required />
 
       <label for="bankSearch">Bank *</label>
-      <input type="text" id="bankSearch" placeholder="Type to search, e.g. GT..." autocomplete="off" required />
+      <div class="search-field-wrap">
+        <svg class="search-field-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="11" cy="11" r="7"></circle>
+          <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+        </svg>
+        <input type="text" id="bankSearch" class="has-search-icon" placeholder="Type to search" autocomplete="off" required />
+      </div>
       <input type="hidden" id="bankCode" />
       <input type="hidden" id="bankName" />
       <div class="bank-results" id="bankResults"></div>
@@ -283,7 +302,7 @@
       <input type="text" id="accountNumber" inputmode="numeric" placeholder="e.g. 0123456789" required />
 
       <label for="benefPhone">Beneficiary contact phone (optional)</label>
-      <input type="tel" id="benefPhone" />
+      <input type="tel" id="benefPhone" placeholder="+234..." />
 
       <button type="submit" id="submitBtn">Submit for Review</button>
 
@@ -300,7 +319,7 @@
       <p class="tracking-note">
         Save this private tracking link. You can use it later to check whether your
         campaign has been approved. If you gave us your email, we've also sent a copy
-        of this link to your inbox — but this page is the fastest way to check your status.
+        of this link to your inbox, but this page is the fastest way to check your status.
       </p>
       <div class="tracking-link-row">
         <input type="text" id="trackingLinkInput" readonly />
@@ -547,7 +566,7 @@
             copyConfirm.textContent = 'Copied!';
           } catch (err) {
             trackingInput.select();
-            copyConfirm.textContent = 'Could not copy automatically — select the link above and copy it manually.';
+            copyConfirm.textContent = 'Could not copy automatically. Select the link above and copy it manually.';
           }
           setTimeout(() => { copyConfirm.textContent = ''; }, 3000);
         });
