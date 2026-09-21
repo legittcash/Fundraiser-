@@ -490,7 +490,7 @@
                   <span id="feeRowPlatform">₦0</span>
                 </div>
                 <div class="fee-row fee-row-net">
-                  <span>Campaign received</span>
+                  <span>Campaign receives</span>
                   <span id="feeRowNet">₦0</span>
                 </div>
                 <p class="fee-note" id="feeNote"></p>
@@ -641,6 +641,11 @@
         const when = new Date(d.created_at).toLocaleString();
         const gross = Number(d.amount) || 0;
         const fee = Number(d.paystack_fee) || 0;
+        // The actual platform fee charged on THIS donation (see
+        // api/donations.js) — already reflects whether the platform-fee
+        // switch was on and this campaign was eligible AT THE TIME of
+        // that donation. 0 means no platform fee was charged on it.
+        const platformFee = Number(d.platform_fee) || 0;
         // Older donations recorded before fee tracking existed have
         // net_amount equal to the gross amount (fee unknown, treated as
         // 0) — see supabase.sql for why that's the safe, honest default.
@@ -648,9 +653,16 @@
 
         // Only show a fee line when there actually was one — a lot of
         // historical or fee-free transactions would otherwise show a
-        // slightly confusing "₦0 fee" note.
+        // slightly confusing "₦0 fee" note. The platform maintenance
+        // fee segment is appended ONLY when platformFee > 0, so a
+        // donation made while the platform fee was off (or before this
+        // campaign's beneficiary was eligible) never shows a "₦0
+        // platform maintenance fee" — it's simply left out.
+        const platformFeeSegment = platformFee > 0
+          ? ` · ₦${platformFee.toLocaleString()} platform maintenance fee`
+          : '';
         const feeNote = fee > 0
-          ? `<span class="donor-fee-note">₦${fee.toLocaleString()} payment processing fee · Campaign received ₦${net.toLocaleString()}</span>`
+          ? `<span class="donor-fee-note">₦${fee.toLocaleString()} payment processing fee${platformFeeSegment} · Campaign received ₦${net.toLocaleString()}</span>`
           : '';
 
         return `
