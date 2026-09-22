@@ -485,7 +485,7 @@
                   <span>Payment processing fee</span>
                   <span id="feeRowProcessing">₦0</span>
                 </div>
-                <div class="fee-row">
+                <div class="fee-row" id="feeRowPlatformWrap">
                   <span>Platform maintenance fee</span>
                   <span id="feeRowPlatform">₦0</span>
                 </div>
@@ -758,6 +758,7 @@
 
   function updateFeeBreakdown(campaign) {
     const feeBreakdown = document.getElementById('feeBreakdown');
+    const feeRowPlatformWrap = document.getElementById('feeRowPlatformWrap');
     const amount = Number(document.getElementById('donorAmount').value);
 
     if (!amount || amount <= 0) {
@@ -772,11 +773,21 @@
 
     document.getElementById('feeRowDonation').textContent = nairaFmt(amount);
     document.getElementById('feeRowProcessing').textContent = nairaFmt(processingFee);
-    document.getElementById('feeRowPlatform').textContent = nairaFmt(platformFee);
     document.getElementById('feeRowNet').textContent = nairaFmt(netAmount);
-    document.getElementById('feeNote').textContent = campaign.platform_fee_enabled && !platformFeeApplicable
-      ? 'Payment processing fee is Paystack\'s standard rate, estimated here and confirmed after payment. Platform maintenance fee is currently ₦0 for this campaign.'
-      : 'Payment processing fee is Paystack\'s standard rate, estimated here and confirmed after payment.';
+    document.getElementById('feeNote').textContent =
+      'Payment processing fee is Paystack\'s standard rate, estimated here and confirmed after payment.';
+
+    // Only show the platform maintenance fee row at all when it's
+    // actually applicable (platform-fee switch on AND this campaign's
+    // beneficiary is eligible) — otherwise the whole row is hidden
+    // rather than showing a "₦0" line, matching how the Recent Donors
+    // list already handles this.
+    if (platformFeeApplicable && platformFee > 0) {
+      document.getElementById('feeRowPlatform').textContent = nairaFmt(platformFee);
+      feeRowPlatformWrap.style.display = 'flex';
+    } else {
+      feeRowPlatformWrap.style.display = 'none';
+    }
 
     feeBreakdown.style.display = 'block';
   }
