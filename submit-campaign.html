@@ -114,6 +114,42 @@
   }
   .image-preview.visible { display: block; }
 
+  /* Required consent checkboxes, placed just above the Submit button.
+     Uses the same card background/spacing language as the rest of the
+     form rather than a plain checkbox + wrapped text, which is hard to
+     read/tap accurately on mobile. */
+  .consent-group {
+    margin: 22px 0 4px;
+    padding-top: 18px;
+    border-top: 1px solid #f0f0f3;
+  }
+  .consent-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 10px 0;
+    cursor: pointer;
+  }
+  .consent-row input[type="checkbox"] {
+    width: 20px;
+    height: 20px;
+    min-width: 20px;
+    margin: 2px 0 0;
+    accent-color: var(--pink);
+    cursor: pointer;
+  }
+  .consent-row span {
+    font-size: 0.85rem;
+    line-height: 1.5;
+    color: var(--text-dark);
+  }
+  .consent-row a {
+    color: var(--pink-dark);
+    font-weight: 600;
+    text-decoration: underline;
+  }
+  .consent-row a:hover { color: var(--pink); }
+
   button[type="submit"] {
     width: 100%;
     background: var(--pink);
@@ -303,6 +339,18 @@
 
       <label for="benefPhone">Beneficiary contact phone (optional)</label>
       <input type="tel" id="benefPhone" placeholder="+234..." />
+
+      <div class="consent-group">
+        <label class="consent-row" for="consentAuthorization">
+          <input type="checkbox" id="consentAuthorization" required />
+          <span>I confirm that I am authorized to submit this patient's information and photograph for fundraising purposes and have obtained the necessary permission.</span>
+        </label>
+
+        <label class="consent-row" for="consentPolicy">
+          <input type="checkbox" id="consentPolicy" required />
+          <span>I have read and understand the <a href="privacy-policy.html" target="_blank" rel="noopener">Privacy Policy</a> and <a href="terms.html" target="_blank" rel="noopener">Terms of Service</a>.</span>
+        </label>
+      </div>
 
       <button type="submit" id="submitBtn">Submit for Review</button>
 

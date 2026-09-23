@@ -288,14 +288,21 @@
     color: #dc2626;
   }
 
-  .admin-link {
+  .site-footer {
     display: block;
     text-align: center;
     margin-top: 40px;
-    color: var(--text-muted);
+    padding-top: 18px;
+    border-top: 1px solid #e5e7eb;
     font-size: 0.8rem;
+    color: var(--text-muted);
+  }
+  .site-footer a {
+    color: var(--text-muted);
     text-decoration: none;
   }
+  .site-footer a:hover { color: var(--pink-dark); text-decoration: underline; }
+  .site-footer .footer-sep { margin: 0 8px; color: #d1d5db; }
 
   .start-fundraiser-btn {
     display: block;
@@ -344,7 +351,9 @@
     <p class="status-msg">Loading campaigns...</p>
   </div>
 
-  <a class="admin-link" href="admin/login.html">Admin login</a>
+  <footer class="site-footer">
+    <a href="privacy-policy.html">Privacy Policy</a><span class="footer-sep">&middot;</span><a href="terms.html">Terms of Service</a>
+  </footer>
 </div>
 
 <script>
