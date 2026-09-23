@@ -34,25 +34,27 @@
   }
   h1 { font-size: 1.25rem; color: var(--text-dark); margin: 0 0 4px; }
   p.sub { color: var(--text-muted); font-size: 0.85rem; margin: 0 0 20px; }
-  label { display: block; font-size: 0.85rem; color: var(--text-muted); margin-bottom: 6px; }
+  label { display: block; font-size: 0.85rem; font-weight: 700; color: var(--text-muted); margin: 12px 0 6px; }
+  label:first-of-type { margin-top: 0; }
   input {
     width: 100%;
-    padding: 12px 14px;
-    border: 1px solid #e5e7eb;
+    padding: 11px 13px;
+    border: 1px solid #d1d5db;
     border-radius: 10px;
-    font-size: 1rem;
-    margin-bottom: 14px;
+    font-size: 0.95rem;
+    font-family: inherit;
   }
   button {
     width: 100%;
     background: var(--pink);
     color: #fff;
     border: none;
-    padding: 13px;
+    padding: 14px;
     font-size: 1rem;
     font-weight: 700;
     border-radius: 12px;
     cursor: pointer;
+    margin-top: 24px;
   }
   button:hover { background: var(--pink-dark); }
   button:disabled { opacity: 0.6; cursor: not-allowed; }

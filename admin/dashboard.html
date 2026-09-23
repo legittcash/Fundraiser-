@@ -164,15 +164,28 @@
   .badge.pending { background: #dbeafe; color: #1e40af; }
   .badge.rejected { background: #fee2e2; color: #991b1b; }
 
-  .row-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+  /* Actions column — a compact, horizontally-wrapping row of buttons
+     rather than one button per line. The table's other columns already
+     use up most of its (scrollable) width, so without a floor here the
+     Actions column can get squeezed down to roughly one button's width,
+     forcing every button onto its own line and making rows very tall.
+     min-width guarantees room for at least 2–3 buttons per line; it's a
+     floor, not a cap, so on a wide desktop window the table (and this
+     column) can still grow and fit more buttons on one line. */
+  .actions-cell { min-width: 250px; }
+  .row-actions { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
   .row-actions button {
     background: none;
     border: 1px solid #e5e7eb;
-    padding: 5px 10px;
+    padding: 6px 10px;
     border-radius: 8px;
     font-size: 0.78rem;
     cursor: pointer;
     color: var(--text-dark);
+    white-space: nowrap;
+    /* A comfortable minimum tap target height for mobile fingers,
+       without forcing every button to the same width. */
+    min-height: 30px;
   }
   .row-actions button:hover { background: #f3f4f6; }
   .row-actions button.danger { color: #dc2626; border-color: #fecaca; }
@@ -208,11 +221,11 @@
     padding: 24px;
   }
   .modal h2 { font-size: 1.15rem; margin: 0 0 16px; color: var(--text-dark); }
-  .modal label { display: block; font-size: 0.85rem; color: var(--text-muted); margin: 12px 0 6px; }
-  .modal input, .modal textarea {
+  .modal label { display: block; font-size: 0.85rem; font-weight: 700; color: var(--text-muted); margin: 12px 0 6px; }
+  .modal input, .modal textarea, .modal select {
     width: 100%;
-    padding: 10px 12px;
-    border: 1px solid #e5e7eb;
+    padding: 11px 13px;
+    border: 1px solid #d1d5db;
     border-radius: 10px;
     font-size: 0.95rem;
     font-family: inherit;
@@ -233,7 +246,22 @@
   .form-error { color: #dc2626; font-size: 0.85rem; margin-top: 10px; }
   .field-error { color: #dc2626; font-size: 0.8rem; margin: -6px 0 10px; }
 
-  /* Searchable bank combobox (type-to-filter list under a text input) */
+  /* Searchable bank combobox — matching search-icon treatment used on
+     the visitor Add a Patient form's own bank search input. */
+  .search-field-wrap { position: relative; }
+  .search-field-icon {
+    position: absolute;
+    left: 13px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 16px;
+    height: 16px;
+    color: #9ca3af;
+    pointer-events: none;
+  }
+  .modal input.has-search-icon { padding-left: 38px; }
+
+  /* Bank results dropdown (type-to-filter list under the search input above) */
   .bank-results {
     display: none;
     max-height: 170px;
@@ -253,7 +281,7 @@
   .bank-result-item:last-child { border-bottom: none; }
   .bank-result-item:hover, .bank-result-item:active { background: #f9fafb; }
   .bank-result-empty { padding: 9px 12px; font-size: 0.85rem; color: var(--text-muted); }
-  .image-preview { width: 100%; height: 140px; object-fit: cover; border-radius: 10px; margin-top: 10px; background: #f0f0f3; display: none; }
+  .image-preview { width: 100%; max-height: 220px; object-fit: contain; border-radius: 10px; margin-top: 10px; background: #f0f0f3; display: none; }
   .image-preview.visible { display: block; }
 
   .status-msg { text-align: center; color: var(--text-muted); padding: 30px; }
@@ -388,8 +416,14 @@
       <input type="text" id="hospital" />
 
       <label for="diagnosis">Diagnosis (e.g. "Kidney Failure")</label>
-      <input type="text" id="diagnosis" />
+      <input type="text" id="diagnosis" placeholder="e.g. Kidney Failure" />
 
+      <!-- "Patient/Authorized Contact Phone Number" and "Secondary Phone
+           Number" below map to the same phone_number / secondary_phone_number
+           fields the visitor form's "Primary contact phone" / "Secondary
+           phone" use — left exactly as they are (field names, IDs,
+           placeholders, and intended purpose all unchanged), per the
+           explicit instruction to never alter those two fields. -->
       <label for="phoneNumber">Patient/Authorized Contact Phone Number <span id="phoneRequiredMark">*</span></label>
       <input type="tel" id="phoneNumber" placeholder="e.g. 08012345678 or +2348012345678" />
       <div class="field-error" id="phoneNumberError" style="display:none;"></div>
@@ -411,7 +445,7 @@
       <img class="image-preview" id="imagePreview" alt="Preview" />
 
       <label for="statusSelect">Status</label>
-      <select id="statusSelect" style="width:100%; padding:10px 12px; border:1px solid #e5e7eb; border-radius:10px; font-size:0.95rem;">
+      <select id="statusSelect">
         <option value="active">Active</option>
         <option value="archived">Archived</option>
         <option value="pending">Pending Review</option>
@@ -438,7 +472,13 @@
         <input type="text" id="newBenefName" placeholder="Name on the bank account" required />
 
         <label for="newBenefBankSearch">Bank *</label>
-        <input type="text" id="newBenefBankSearch" placeholder="Type to search, e.g. GT..." autocomplete="off" required />
+        <div class="search-field-wrap">
+          <svg class="search-field-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="11" cy="11" r="7"></circle>
+            <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+          </svg>
+          <input type="text" id="newBenefBankSearch" class="has-search-icon" placeholder="Type to search" autocomplete="off" required />
+        </div>
         <input type="hidden" id="newBenefBankCode" />
         <input type="hidden" id="newBenefBankName" />
         <div class="bank-results" id="newBenefBankResults"></div>
@@ -471,12 +511,19 @@
       <input type="hidden" id="beneficiaryFundraiserId" />
 
       <label for="beneficiaryName">Beneficiary name *</label>
-      <input type="text" id="beneficiaryName" required />
+      <input type="text" id="beneficiaryName" placeholder="Name on the bank account" required />
 
       <label for="beneficiaryBank">Bank *</label>
-      <select id="beneficiaryBank" style="width:100%; padding:10px 12px; border:1px solid #e5e7eb; border-radius:10px; font-size:0.95rem;">
-        <option value="">Loading banks...</option>
-      </select>
+      <div class="search-field-wrap">
+        <svg class="search-field-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="11" cy="11" r="7"></circle>
+          <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+        </svg>
+        <input type="text" id="beneficiaryBank" class="has-search-icon" placeholder="Type to search" autocomplete="off" required />
+      </div>
+      <input type="hidden" id="beneficiaryBankCode" />
+      <input type="hidden" id="beneficiaryBankName" />
+      <div class="bank-results" id="beneficiaryBankResults"></div>
 
       <label for="beneficiaryAccountNumber">Account number *</label>
       <input type="text" id="beneficiaryAccountNumber" inputmode="numeric" placeholder="e.g. 0123456789" />
@@ -485,10 +532,10 @@
       <input type="number" id="beneficiaryPercentage" min="0" max="100" step="0.1" value="0" />
 
       <label for="beneficiaryPhone">Beneficiary primary phone</label>
-      <input type="tel" id="beneficiaryPhone" placeholder="e.g. 08012345678 or +2348012345678" />
+      <input type="tel" id="beneficiaryPhone" placeholder="+234..." />
 
       <label for="beneficiarySecondaryPhone">Beneficiary secondary phone (optional)</label>
-      <input type="tel" id="beneficiarySecondaryPhone" placeholder="e.g. 08012345678 or +2348012345678" />
+      <input type="tel" id="beneficiarySecondaryPhone" placeholder="+234..." />
 
       <div class="modal-actions">
         <button type="button" class="btn-secondary" id="cancelBeneficiaryModalBtn">Close</button>
@@ -893,7 +940,7 @@
         <td class="nowrap">${c.phone_number ? escapeHtml(c.phone_number) : '<span class="muted-cell">—</span>'}</td>
         <td class="nowrap">${c.secondary_phone_number ? escapeHtml(c.secondary_phone_number) : '<span class="muted-cell">—</span>'}</td>
         <td class="nowrap muted-cell">${createdDate}</td>
-        <td>
+        <td class="actions-cell">
           <div class="row-actions">
             <button onclick="openEditModal(${c.id})">Edit</button>
             <button onclick="openBeneficiaryModal(${c.id}, '${escapeJs(c.patient_name)}')">Beneficiary</button>
@@ -1323,28 +1370,24 @@
   let bankListCache = [];
 
   async function loadBankList() {
-    const select = document.getElementById('beneficiaryBank');
     try {
       const res = await fetch('/api/admin/beneficiaries?route=banks');
       const data = await res.json();
       if (!res.ok) {
-        select.innerHTML = '<option value="">Could not load banks</option>';
+        console.error('Could not load bank list:', data?.error || res.status);
         return;
       }
       bankListCache = data.banks || [];
-      select.innerHTML =
-        '<option value="">Select a bank...</option>' +
-        bankListCache.map((b) => `<option value="${escapeHtml(b.code)}">${escapeHtml(b.name)}</option>`).join('');
     } catch (err) {
       console.error('Failed to load bank list:', err);
-      select.innerHTML = '<option value="">Could not load banks</option>';
     }
   }
 
   // Reusable searchable bank combobox: filters the SAME bankListCache
-  // used by the standalone Beneficiary modal's plain <select> above —
-  // only one bank list is ever fetched — and gives a type-to-search UI
-  // over it, so "GT..." narrows down to GTBank etc. as the admin types.
+  // (fetched once by loadBankList) and gives a type-to-search UI over
+  // it, so "GT..." narrows down to GTBank etc. as the admin types. Used
+  // by both the "Add New Campaign" modal's bank field and the
+  // standalone Beneficiary modal's bank field.
   function setupBankCombobox(searchInputId, hiddenCodeId, hiddenNameId, resultsId) {
     const searchInput = document.getElementById(searchInputId);
     const hiddenCode = document.getElementById(hiddenCodeId);
@@ -1396,6 +1439,7 @@
     });
   }
   setupBankCombobox('newBenefBankSearch', 'newBenefBankCode', 'newBenefBankName', 'newBenefBankResults');
+  setupBankCombobox('beneficiaryBank', 'beneficiaryBankCode', 'beneficiaryBankName', 'beneficiaryBankResults');
 
   window.openBeneficiaryModal = async function (fundraiserId, patientName) {
     document.getElementById('beneficiaryModalTitle').textContent = `Beneficiary — ${patientName}`;
@@ -1422,7 +1466,16 @@
 
   function populateBeneficiaryForm(beneficiary) {
     document.getElementById('beneficiaryName').value = beneficiary?.beneficiary_name || '';
-    document.getElementById('beneficiaryBank').value = beneficiary?.bank_code || '';
+    // Pre-fill the searchable bank field: show the bank's NAME in the
+    // visible text box (what the admin recognizes), while the two
+    // hidden fields hold the actual code/name pair setupBankCombobox()
+    // reads on save — exactly the same code/name/search-box split the
+    // "Add New Campaign" modal's bank field already uses.
+    document.getElementById('beneficiaryBank').value = beneficiary?.bank_name || '';
+    document.getElementById('beneficiaryBankCode').value = beneficiary?.bank_code || '';
+    document.getElementById('beneficiaryBankName').value = beneficiary?.bank_name || '';
+    document.getElementById('beneficiaryBankResults').classList.remove('open');
+    document.getElementById('beneficiaryBankResults').innerHTML = '';
     document.getElementById('beneficiaryAccountNumber').value = beneficiary?.account_number || '';
     document.getElementById('beneficiaryPercentage').value = beneficiary?.settlement_percentage ?? 0;
     document.getElementById('beneficiaryPhone').value = beneficiary?.primary_phone_number || '';
@@ -1477,8 +1530,8 @@
     const payload = {
       fundraiser_id: Number(fundraiserId),
       beneficiary_name: document.getElementById('beneficiaryName').value.trim(),
-      bank_code: document.getElementById('beneficiaryBank').value,
-      bank_name: (bankListCache.find((b) => b.code === document.getElementById('beneficiaryBank').value) || {}).name || null,
+      bank_code: document.getElementById('beneficiaryBankCode').value,
+      bank_name: document.getElementById('beneficiaryBankName').value || null,
       account_number: document.getElementById('beneficiaryAccountNumber').value.trim(),
       settlement_percentage: Number(document.getElementById('beneficiaryPercentage').value) || 0,
       primary_phone_number: document.getElementById('beneficiaryPhone').value.trim(),
