@@ -170,11 +170,12 @@
     background: var(--pink);
     color: #fff;
     border: none;
-    padding: 15px;
-    font-size: 1.05rem;
+    padding: 14px;
+    font-size: 1rem;
     font-weight: 700;
-    border-radius: 14px;
+    border-radius: 12px;
     cursor: pointer;
+    margin-top: 4px;
     transition: background 0.2s ease, transform 0.1s ease;
   }
 
@@ -198,17 +199,20 @@
   .amount-input-wrap label {
     display: block;
     font-size: 0.85rem;
+    font-weight: 700;
     color: var(--text-muted);
-    margin-bottom: 6px;
+    margin: 12px 0 6px;
   }
+  .amount-input-wrap label:first-of-type { margin-top: 0; }
 
   .amount-input-wrap input,
   .amount-input-wrap input[type="email"] {
     width: 100%;
-    padding: 12px 14px;
-    border: 1px solid #e5e7eb;
+    padding: 11px 13px;
+    border: 1px solid #d1d5db;
     border-radius: 10px;
-    font-size: 1rem;
+    font-size: 0.95rem;
+    font-family: inherit;
     margin-bottom: 10px;
   }
 
