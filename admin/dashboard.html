@@ -415,21 +415,21 @@
       <label for="hospital">Hospital</label>
       <input type="text" id="hospital" />
 
-      <label for="diagnosis">Diagnosis (e.g. "Kidney Failure")</label>
+      <label for="diagnosis">Diagnosis</label>
       <input type="text" id="diagnosis" placeholder="e.g. Kidney Failure" />
 
-      <!-- "Patient/Authorized Contact Phone Number" and "Secondary Phone
+      <!-- "Primary Phone Number" and "Secondary Phone
            Number" below map to the same phone_number / secondary_phone_number
            fields the visitor form's "Primary contact phone" / "Secondary
            phone" use — left exactly as they are (field names, IDs,
            placeholders, and intended purpose all unchanged), per the
            explicit instruction to never alter those two fields. -->
-      <label for="phoneNumber">Patient/Authorized Contact Phone Number <span id="phoneRequiredMark">*</span></label>
-      <input type="tel" id="phoneNumber" placeholder="e.g. 08012345678 or +2348012345678" />
+      <label for="phoneNumber">Primary Phone Number <span id="phoneRequiredMark">*</span></label>
+      <input type="tel" id="phoneNumber" placeholder="+234..." />
       <div class="field-error" id="phoneNumberError" style="display:none;"></div>
 
       <label for="secondaryPhoneNumber">Secondary Phone Number (Optional)</label>
-      <input type="tel" id="secondaryPhoneNumber" placeholder="e.g. 08012345678 or +2348012345678" />
+      <input type="tel" id="secondaryPhoneNumber" placeholder="+234..." />
       <p style="font-size:0.78rem; color:var(--text-muted); margin:2px 0 0;">
         🔒 Private — for admin use only. Never shown on the public campaign page.
       </p>
@@ -528,7 +528,7 @@
       <label for="beneficiaryAccountNumber">Account number *</label>
       <input type="text" id="beneficiaryAccountNumber" inputmode="numeric" placeholder="e.g. 0123456789" />
 
-      <label for="beneficiaryPercentage">Platform fee % (0 = beneficiary gets full net amount)</label>
+      <label for="beneficiaryPercentage">Platform fee % of gross donation (0 = beneficiary gets full net amount)</label>
       <input type="number" id="beneficiaryPercentage" min="0" max="100" step="0.1" value="0" />
 
       <label for="beneficiaryPhone">Beneficiary primary phone</label>
