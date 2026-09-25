@@ -9,7 +9,7 @@
 //   {
 //     patient_name, hospital, diagnosis, story, goal_amount,
 //     phone_number, secondary_phone_number,
-//     fileBase64, contentType,               // photo, optional
+//     fileBase64, contentType,               // patient photo, REQUIRED
 //     beneficiary_name, bank_code, bank_name, account_number,
 //     beneficiary_phone, beneficiary_secondary_phone
 //   }
@@ -233,9 +233,20 @@ export default async function handler(req, res) {
     });
   }
 
-  // ---- Optional photo upload ----
+  // ---- Validate patient photo (REQUIRED) ----
+  // Enforced here, server-side — this is the real gate. The browser's
+  // "required" file input and its own JS check (see submit-campaign.html)
+  // are only a first line of defense for a normal visitor using the
+  // form; neither can be trusted on their own, since a request sent
+  // directly to this API could skip the browser entirely.
+  if (!body.fileBase64 || !body.contentType) {
+    logStage('validation', 'Rejected — missing patient photo (fileBase64/contentType).');
+    return res.status(400).json({ error: 'Please upload a photo of the patient before submitting this campaign.' });
+  }
+
+  // ---- Photo upload ----
   let imageUrl = null;
-  if (body.fileBase64 && body.contentType) {
+  {
     // Defensive guard against exactly the failure mode reported in
     // production (TypeError: uploadCampaignImage is not a function).
     // Source-level inspection confirms lib/campaign-images.js DOES
@@ -254,7 +265,7 @@ export default async function handler(req, res) {
           `This points to a stale/partial deployment of lib/campaign-images.js — redeploy with the build cache cleared.`
       );
       return res.status(500).json({
-        error: 'Photo upload is temporarily unavailable. Please try again without a photo, or contact support with the reference code below.',
+        error: 'Photo upload is temporarily unavailable. Please try again shortly, or contact support with the reference code below.',
         reference: ref,
       });
     }
