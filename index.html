@@ -303,6 +303,17 @@
   }
   .site-footer a:hover { color: var(--pink-dark); text-decoration: underline; }
   .site-footer .footer-sep { margin: 0 8px; color: #d1d5db; }
+  .site-footer .footer-contact {
+    margin-top: 10px;
+    font-size: 0.76rem;
+    color: var(--text-muted);
+    line-height: 1.6;
+  }
+  .site-footer .footer-copyright {
+    margin-top: 10px;
+    font-size: 0.75rem;
+    color: var(--text-muted);
+  }
 
   /* ==========================================================
      HOW IT WORKS — four numbered steps, 2 columns on phones,
@@ -315,6 +326,10 @@
     text-align: center;
     margin: 0 0 22px;
   }
+
+  /* FAQ heading is left-aligned, unlike the centered "How It Works"
+     heading above it — an explicit override on the shared base class. */
+  .faq-heading { text-align: left; }
 
   .how-it-works { margin: 46px 0 10px; }
 
@@ -502,7 +517,7 @@
 
   <!-- ============== FREQUENTLY ASKED QUESTIONS ============== -->
   <section class="faq-section" aria-labelledby="faqHeading">
-    <h2 id="faqHeading" class="section-heading">Frequently Asked Questions</h2>
+    <h2 id="faqHeading" class="section-heading faq-heading">FAQs</h2>
     <div class="faq-list" id="faqList">
 
       <div class="faq-item">
@@ -609,7 +624,7 @@
           <span class="faq-icon" aria-hidden="true">+</span><span>Can I submit a patient without a photograph?</span>
         </button></h3>
         <div class="faq-answer" id="faq-answer-12" role="region" aria-labelledby="faq-q-12" hidden>
-          <p>Yes, if the submission form allows the campaign to be submitted without a photograph. However, any information required by the form must still be provided.</p>
+          <p>No. A patient photograph is required for every new campaign submission. The submission form will not accept a campaign without one.</p>
         </div>
       </div>
 
@@ -645,6 +660,11 @@
 
   <footer class="site-footer">
     <a href="privacy-policy.html">Privacy Policy</a><span class="footer-sep">&middot;</span><a href="terms.html">Terms of Service</a>
+    <div class="footer-contact">
+      KODEP &mdash; Kidney and Other Disease Eradication Program &middot; Enugu State, Nigeria<br />
+      <a href="mailto:ojinwayoo@gmail.com">ojinwayoo@gmail.com</a> &middot; <a href="tel:+2348062842257">08062842257</a>
+    </div>
+    <div class="footer-copyright">&copy; <span id="footerYear">2026</span> KODEP. All rights reserved.</div>
   </footer>
 </div>
 
@@ -777,6 +797,15 @@
         }
       });
     });
+  })();
+</script>
+
+<!-- Footer copyright year — tiny, isolated, self-contained. Keeps the
+     "© YYYY KODEP" line correct without ever needing a manual edit. -->
+<script>
+  (function () {
+    const yearEl = document.getElementById('footerYear');
+    if (yearEl) yearEl.textContent = new Date().getFullYear();
   })();
 </script>
 
