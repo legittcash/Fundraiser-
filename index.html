@@ -304,6 +304,128 @@
   .site-footer a:hover { color: var(--pink-dark); text-decoration: underline; }
   .site-footer .footer-sep { margin: 0 8px; color: #d1d5db; }
 
+  /* ==========================================================
+     HOW IT WORKS — four numbered steps, 2 columns on phones,
+     4 columns from tablet width up. Kept compact on purpose.
+     ========================================================== */
+  .section-heading {
+    font-size: 1.25rem;
+    font-weight: 700;
+    color: var(--text-dark);
+    text-align: center;
+    margin: 0 0 22px;
+  }
+
+  .how-it-works { margin: 46px 0 10px; }
+
+  .steps-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 22px 16px;
+  }
+  @media (min-width: 640px) {
+    .steps-grid { grid-template-columns: repeat(4, 1fr); }
+  }
+
+  .step-item { text-align: center; }
+
+  .step-circle {
+    width: 42px;
+    height: 42px;
+    border-radius: 50%;
+    background: var(--pink);
+    color: #fff;
+    font-weight: 800;
+    font-size: 1.05rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin: 0 auto 10px;
+  }
+
+  .step-title {
+    font-size: 0.9rem;
+    font-weight: 700;
+    color: var(--text-dark);
+    margin: 0 0 5px;
+  }
+
+  .step-text {
+    font-size: 0.8rem;
+    line-height: 1.5;
+    color: var(--text-muted);
+    margin: 0;
+  }
+
+  /* ==========================================================
+     FAQ — accordion. Native buttons per question (keyboard +
+     screen-reader accessible), only one answer open at a time.
+     The +/− glyph AND the aria-expanded state both change, so
+     the open/closed state never depends on colour alone.
+     ========================================================== */
+  .faq-section { margin: 40px 0 8px; }
+
+  .faq-list {
+    background: var(--card-bg);
+    border-radius: 14px;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.05);
+    overflow: hidden;
+  }
+
+  .faq-item { border-bottom: 1px solid #f0f0f3; }
+  .faq-item:last-child { border-bottom: none; }
+  .faq-question-h { margin: 0; }
+
+  .faq-question {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    background: none;
+    border: none;
+    text-align: left;
+    padding: 15px 16px;
+    font-size: 0.9rem;
+    font-weight: 600;
+    font-family: inherit;
+    color: var(--text-dark);
+    cursor: pointer;
+  }
+  .faq-question:hover { background: #f9fafb; }
+  .faq-question:focus-visible {
+    outline: 2px solid var(--pink);
+    outline-offset: -2px;
+  }
+
+  .faq-icon {
+    flex-shrink: 0;
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    background: #f3f4f6;
+    color: var(--pink-dark);
+    font-weight: 800;
+    font-size: 0.95rem;
+    line-height: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .faq-question[aria-expanded="true"] .faq-icon {
+    background: var(--pink);
+    color: #fff;
+  }
+  .faq-question[aria-expanded="true"] { color: var(--pink-dark); }
+
+  .faq-answer {
+    padding: 0 16px 16px 50px;
+    font-size: 0.85rem;
+    line-height: 1.6;
+    color: var(--text-muted);
+  }
+  .faq-answer p { margin: 0; }
+  .faq-answer[hidden] { display: none; }
+
   .start-fundraiser-btn {
     display: block;
     text-align: center;
@@ -350,6 +472,176 @@
   <div class="campaign-grid" id="campaignGrid">
     <p class="status-msg">Loading campaigns...</p>
   </div>
+
+  <!-- ============== HOW IT WORKS ============== -->
+  <section class="how-it-works" aria-labelledby="howItWorksHeading">
+    <h2 id="howItWorksHeading" class="section-heading">How It Works</h2>
+    <div class="steps-grid">
+      <div class="step-item">
+        <div class="step-circle">1</div>
+        <h3 class="step-title">Find a Patient</h3>
+        <p class="step-text">Browse the campaigns and search for a patient you want to support.</p>
+      </div>
+      <div class="step-item">
+        <div class="step-circle">2</div>
+        <h3 class="step-title">View Their Story</h3>
+        <p class="step-text">Open "View Details" to see the patient's story, fundraising goal, and other campaign information.</p>
+      </div>
+      <div class="step-item">
+        <div class="step-circle">3</div>
+        <h3 class="step-title">Make a Donation</h3>
+        <p class="step-text">Choose the amount you want to donate and complete the payment securely through the available payment system.</p>
+      </div>
+      <div class="step-item">
+        <div class="step-circle">4</div>
+        <h3 class="step-title">Help Make a Difference</h3>
+        <p class="step-text">Your donation contributes toward the patient's fundraising campaign and helps support their medical treatment.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============== FREQUENTLY ASKED QUESTIONS ============== -->
+  <section class="faq-section" aria-labelledby="faqHeading">
+    <h2 id="faqHeading" class="section-heading">Frequently Asked Questions</h2>
+    <div class="faq-list" id="faqList">
+
+      <div class="faq-item">
+        <h3 class="faq-question-h"><button type="button" class="faq-question" aria-expanded="false" aria-controls="faq-answer-1" id="faq-q-1">
+          <span class="faq-icon" aria-hidden="true">+</span><span>How can I donate to a patient?</span>
+        </button></h3>
+        <div class="faq-answer" id="faq-answer-1" role="region" aria-labelledby="faq-q-1" hidden>
+          <p>Find the patient you want to support, open their campaign by clicking "View Details", and follow the donation instructions provided on the campaign page.</p>
+        </div>
+      </div>
+
+      <div class="faq-item">
+        <h3 class="faq-question-h"><button type="button" class="faq-question" aria-expanded="false" aria-controls="faq-answer-2" id="faq-q-2">
+          <span class="faq-icon" aria-hidden="true">+</span><span>Is my donation payment secure?</span>
+        </button></h3>
+        <div class="faq-answer" id="faq-answer-2" role="region" aria-labelledby="faq-q-2" hidden>
+          <p>Payments are processed through our payment provider. KODEP does not directly handle or store your card or bank payment details.</p>
+        </div>
+      </div>
+
+      <div class="faq-item">
+        <h3 class="faq-question-h"><button type="button" class="faq-question" aria-expanded="false" aria-controls="faq-answer-3" id="faq-q-3">
+          <span class="faq-icon" aria-hidden="true">+</span><span>How much of my donation goes to the campaign?</span>
+        </button></h3>
+        <div class="faq-answer" id="faq-answer-3" role="region" aria-labelledby="faq-q-3" hidden>
+          <p>The amount received by a campaign may reflect applicable payment processing fees and, where enabled and applicable, a platform maintenance fee. Any applicable charges are shown during the donation process before you complete your payment.</p>
+        </div>
+      </div>
+
+      <div class="faq-item">
+        <h3 class="faq-question-h"><button type="button" class="faq-question" aria-expanded="false" aria-controls="faq-answer-4" id="faq-q-4">
+          <span class="faq-icon" aria-hidden="true">+</span><span>What is the platform maintenance fee?</span>
+        </button></h3>
+        <div class="faq-answer" id="faq-answer-4" role="region" aria-labelledby="faq-q-4" hidden>
+          <p>The platform maintenance fee helps support the operating and maintenance costs of the fundraising platform. When the fee is enabled and applicable to a campaign, it is calculated according to the platform's stated fee policy and shown before payment is completed.</p>
+        </div>
+      </div>
+
+      <div class="faq-item">
+        <h3 class="faq-question-h"><button type="button" class="faq-question" aria-expanded="false" aria-controls="faq-answer-5" id="faq-q-5">
+          <span class="faq-icon" aria-hidden="true">+</span><span>Can I donate anonymously?</span>
+        </button></h3>
+        <div class="faq-answer" id="faq-answer-5" role="region" aria-labelledby="faq-q-5" hidden>
+          <p>Yes. Where the donation form provides an anonymous option, you can choose to have your name displayed as "Anonymous" on the campaign.</p>
+        </div>
+      </div>
+
+      <div class="faq-item">
+        <h3 class="faq-question-h"><button type="button" class="faq-question" aria-expanded="false" aria-controls="faq-answer-6" id="faq-q-6">
+          <span class="faq-icon" aria-hidden="true">+</span><span>Can I still donate after a campaign reaches its goal?</span>
+        </button></h3>
+        <div class="faq-answer" id="faq-answer-6" role="region" aria-labelledby="faq-q-6" hidden>
+          <p>Yes. Donations may still be accepted after a campaign reaches its displayed fundraising goal, unless the campaign has been closed or otherwise made unavailable for donations.</p>
+        </div>
+      </div>
+
+      <div class="faq-item">
+        <h3 class="faq-question-h"><button type="button" class="faq-question" aria-expanded="false" aria-controls="faq-answer-7" id="faq-q-7">
+          <span class="faq-icon" aria-hidden="true">+</span><span>Who can submit a patient for fundraising?</span>
+        </button></h3>
+        <div class="faq-answer" id="faq-answer-7" role="region" aria-labelledby="faq-q-7" hidden>
+          <p>A person submitting a patient must have the necessary permission or authority to provide the patient's information and photograph for fundraising purposes. All submissions are reviewed before they are published.</p>
+        </div>
+      </div>
+
+      <div class="faq-item">
+        <h3 class="faq-question-h"><button type="button" class="faq-question" aria-expanded="false" aria-controls="faq-answer-8" id="faq-q-8">
+          <span class="faq-icon" aria-hidden="true">+</span><span>Does every submitted patient appear on the website immediately?</span>
+        </button></h3>
+        <div class="faq-answer" id="faq-answer-8" role="region" aria-labelledby="faq-q-8" hidden>
+          <p>No. Patient submissions are reviewed by KODEP before they become publicly visible. A submission may be approved or rejected after review.</p>
+        </div>
+      </div>
+
+      <div class="faq-item">
+        <h3 class="faq-question-h"><button type="button" class="faq-question" aria-expanded="false" aria-controls="faq-answer-9" id="faq-q-9">
+          <span class="faq-icon" aria-hidden="true">+</span><span>How long does campaign approval take?</span>
+        </button></h3>
+        <div class="faq-answer" id="faq-answer-9" role="region" aria-labelledby="faq-q-9" hidden>
+          <p>Approval time may vary depending on the information provided and the review process. You will receive an update through the contact information provided when submitting the campaign.</p>
+        </div>
+      </div>
+
+      <div class="faq-item">
+        <h3 class="faq-question-h"><button type="button" class="faq-question" aria-expanded="false" aria-controls="faq-answer-10" id="faq-q-10">
+          <span class="faq-icon" aria-hidden="true">+</span><span>What happens if my submission is rejected?</span>
+        </button></h3>
+        <div class="faq-answer" id="faq-answer-10" role="region" aria-labelledby="faq-q-10" hidden>
+          <p>If a submission is rejected, the submitter can use the private tracking information provided after submission to check the status and view the reason for rejection where one has been provided.</p>
+        </div>
+      </div>
+
+      <div class="faq-item">
+        <h3 class="faq-question-h"><button type="button" class="faq-question" aria-expanded="false" aria-controls="faq-answer-11" id="faq-q-11">
+          <span class="faq-icon" aria-hidden="true">+</span><span>Can I track a submitted patient campaign?</span>
+        </button></h3>
+        <div class="faq-answer" id="faq-answer-11" role="region" aria-labelledby="faq-q-11" hidden>
+          <p>Yes. After submitting a patient, the submitter receives a private tracking link that can be used to check the submission status.</p>
+        </div>
+      </div>
+
+      <div class="faq-item">
+        <h3 class="faq-question-h"><button type="button" class="faq-question" aria-expanded="false" aria-controls="faq-answer-12" id="faq-q-12">
+          <span class="faq-icon" aria-hidden="true">+</span><span>Can I submit a patient without a photograph?</span>
+        </button></h3>
+        <div class="faq-answer" id="faq-answer-12" role="region" aria-labelledby="faq-q-12" hidden>
+          <p>Yes, if the submission form allows the campaign to be submitted without a photograph. However, any information required by the form must still be provided.</p>
+        </div>
+      </div>
+
+      <div class="faq-item">
+        <h3 class="faq-question-h"><button type="button" class="faq-question" aria-expanded="false" aria-controls="faq-answer-13" id="faq-q-13">
+          <span class="faq-icon" aria-hidden="true">+</span><span>What information about a patient is displayed publicly?</span>
+        </button></h3>
+        <div class="faq-answer" id="faq-answer-13" role="region" aria-labelledby="faq-q-13" hidden>
+          <p>Only information intended for the public campaign is displayed, such as the patient's name, photograph, hospital, diagnosis, story, fundraising goal, and campaign progress. Private information such as beneficiary banking details is not displayed publicly.</p>
+        </div>
+      </div>
+
+      <div class="faq-item">
+        <h3 class="faq-question-h"><button type="button" class="faq-question" aria-expanded="false" aria-controls="faq-answer-14" id="faq-q-14">
+          <span class="faq-icon" aria-hidden="true">+</span><span>Does KODEP guarantee that a campaign will reach its fundraising goal?</span>
+        </button></h3>
+        <div class="faq-answer" id="faq-answer-14" role="region" aria-labelledby="faq-q-14" hidden>
+          <p>No. Publishing a campaign does not guarantee that it will receive enough donations to reach its fundraising goal.</p>
+        </div>
+      </div>
+
+      <div class="faq-item">
+        <h3 class="faq-question-h"><button type="button" class="faq-question" aria-expanded="false" aria-controls="faq-answer-15" id="faq-q-15">
+          <span class="faq-icon" aria-hidden="true">+</span><span>How can I contact KODEP?</span>
+        </button></h3>
+        <div class="faq-answer" id="faq-answer-15" role="region" aria-labelledby="faq-q-15" hidden>
+          <p>You can contact KODEP using the contact information provided on the website, including the official email address and phone number.</p>
+        </div>
+      </div>
+
+    </div>
+  </section>
 
   <footer class="site-footer">
     <a href="privacy-policy.html">Privacy Policy</a><span class="footer-sep">&middot;</span><a href="terms.html">Terms of Service</a>
@@ -441,6 +733,51 @@
       loadCampaigns(searchInput.value.trim());
     }, 300);
   });
+</script>
+
+<!-- FAQ accordion — deliberately kept in its own, separate script
+     block with its own scope (an IIFE) so it can never collide with,
+     or depend on, any variable or function from the campaign-loading
+     script above. It only ever touches .faq-question buttons and their
+     matching .faq-answer panels; nothing here reads or writes anything
+     related to campaigns, search, donations, or any other existing
+     feature. -->
+<script>
+  (function () {
+    const faqButtons = document.querySelectorAll('.faq-question');
+
+    function closeFaqItem(button) {
+      const panel = document.getElementById(button.getAttribute('aria-controls'));
+      button.setAttribute('aria-expanded', 'false');
+      button.querySelector('.faq-icon').textContent = '+';
+      if (panel) panel.hidden = true;
+    }
+
+    function openFaqItem(button) {
+      const panel = document.getElementById(button.getAttribute('aria-controls'));
+      button.setAttribute('aria-expanded', 'true');
+      button.querySelector('.faq-icon').textContent = '\u2212'; // minus sign
+      if (panel) panel.hidden = false;
+    }
+
+    faqButtons.forEach((button) => {
+      button.addEventListener('click', () => {
+        const isOpen = button.getAttribute('aria-expanded') === 'true';
+
+        // Only one answer open at a time: close every other question
+        // before opening (or simply closing) the one just clicked.
+        faqButtons.forEach((other) => {
+          if (other !== button) closeFaqItem(other);
+        });
+
+        if (isOpen) {
+          closeFaqItem(button);
+        } else {
+          openFaqItem(button);
+        }
+      });
+    });
+  })();
 </script>
 
 </body>

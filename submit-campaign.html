@@ -302,8 +302,8 @@
       <label for="goalAmount">Fundraising goal (₦) *</label>
       <input type="number" id="goalAmount" min="1" required />
 
-      <label for="photoInput">Patient photo</label>
-      <input type="file" id="photoInput" accept="image/jpeg,image/png,image/webp" />
+      <label for="photoInput">Patient photo *</label>
+      <input type="file" id="photoInput" accept="image/jpeg,image/png,image/webp" required />
       <img class="image-preview" id="imagePreview" alt="Preview" />
 
       <label for="phoneNumber">Primary contact phone *</label>
@@ -523,6 +523,10 @@
 
     if (!payload.submitter_name || !payload.submitter_phone) {
       formError.textContent = 'Please fill in your name and phone number.';
+      return;
+    }
+    if (!selectedFileBase64 || !selectedFileContentType) {
+      formError.textContent = 'Please upload a photo of the patient before submitting this campaign.';
       return;
     }
     if (!payload.patient_name || !payload.goal_amount || !payload.phone_number) {

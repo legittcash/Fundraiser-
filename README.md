@@ -462,33 +462,42 @@ few seconds later the totals and Recent Donors list update.
 > related admin operations into fewer, router-style files — using a
 > `?route=` or `?action=` query parameter to pick which section of the
 > file handles a given request — to stay comfortably under that limit
-> (**11 functions total** as of the private tracking feature below,
-> which added one new file, `api/track-campaign.js`) while keeping every
-> feature working exactly as before. This is purely a file-organization
-> choice; none of the underlying logic changed.
+> (**11 functions total**, unchanged since `api/track-campaign.js` was
+> added) while keeping every feature working exactly as before. This is
+> purely a file-organization choice; none of the underlying logic
+> changed. Nothing in this round of UI/legal-page changes added or
+> removed a serverless function.
 
 ```
 patient-fundraiser/
 ├── package.json                     # "type": "module" — declares the whole project as ES Modules,
 │                                    # so Vercel's build/bundling has no ESM/CommonJS ambiguity to resolve.
 │                                    # Also lists the "resend" package (Vercel runs `npm install` automatically).
-├── index.html                      # Public homepage: Jiji-style campaign cards, search,
-│                                    # "+ Start a Fundraiser" button
+├── index.html                      # Public homepage: KODEP header/logo, hero section, campaign
+│                                    # cards (pink border, 5:6 photo), "+ Add a Patient" button,
+│                                    # footer with Privacy Policy / Terms of Service links
 ├── campaign.html                   # Public campaign details page — donate button calls
 │                                    # /api/initialize-donation and redirects to Paystack's
-│                                    # hosted checkout (no PaystackPop / public key used here anymore)
+│                                    # hosted checkout (no PaystackPop / public key used here anymore);
+│                                    # live pre-payment fee breakdown; uncropped 5:6 detail photo
 ├── submit-campaign.html            # Public visitor campaign submission form — patient info
 │                                    # + beneficiary/payout info + submitter contact info,
-│                                    # with a searchable bank field, returns a private tracking link
+│                                    # with a searchable bank field, two required consent
+│                                    # checkboxes (authorization + Privacy Policy/Terms),
+│                                    # returns a private tracking link
 ├── track.html                      # Public, private tracking-link status page — no login,
 │                                    # the token in the URL itself is the access credential
+├── privacy-policy.html             # Public: KODEP Privacy Policy (15 sections)
+├── terms.html                      # Public: KODEP Terms of Service (23 sections)
 ├── admin/
-│   ├── login.html                    # Admin login form
+│   ├── login.html                    # Admin login form (not linked from any public page —
+│   │                                  # reached only by its direct URL)
 │   └── dashboard.html                # Campaigns (6 tabs incl. Pending Review and Rejected),
 │                                      # analytics, combined campaign+beneficiary creation form,
-│                                      # beneficiary/settlement UI, Platform Fee master switch,
-│                                      # submitter contact info (admin-only column), rejection-reason
-│                                      # prompt on Reject, Copy Public Link on active campaigns
+│                                      # beneficiary/settlement UI (searchable bank field), Platform
+│                                      # Fee master switch, submitter contact info (admin-only column),
+│                                      # rejection-reason prompt on Reject, Copy Public Link on active
+│                                      # campaigns, responsive wrapping Actions column
 ├── images/
 │   └── lucy.jpg                      # Fallback image used if a campaign has no photo
 ├── lib/
@@ -509,7 +518,9 @@ patient-fundraiser/
 ├── api/                              # 11 files total = 11 Vercel Serverless Functions
 │   ├── campaigns.js                   # Public: list active campaigns (+ search) — explicit column list
 │   ├── campaign.js                    # Public: fetch one campaign by slug — explicit column list,
-│   │                                   # NEVER returns anything about beneficiaries/subaccounts
+│   │                                   # NEVER returns anything about beneficiaries/subaccounts;
+│   │                                   # also returns platform_fee_enabled/platform_fee_applicable
+│   │                                   # (booleans only) so campaign.html's fee preview is accurate
 │   ├── initialize-donation.js         # Public: securely starts a donation server-side; decides
 │   │                                   # settlement subaccount + platform fee, the browser never does
 │   ├── submit-campaign.js             # Public: visitor campaign submission — creates a 'pending'
@@ -518,8 +529,8 @@ patient-fundraiser/
 │   │                                   # with rollback if either half fails
 │   ├── track-campaign.js              # Public: private submission-status lookup by tracking_token —
 │   │                                   # explicit column allowlist, never returns submitter/internal fields
-│   ├── donations.js                   # Public: recent donors for one campaign, incl. gross/fee/net —
-│   │                                   # anonymity resolved server-side
+│   ├── donations.js                   # Public: recent donors for one campaign, incl. gross/Paystack-fee/
+│   │                                   # platform-fee/net — anonymity resolved server-side
 │   ├── progress.js                    # Public: live totals for one campaign
 │   ├── paystack-webhook.js            # Verifies + records real payments: gross/Paystack-fee/
 │   │                                   # platform-fee/net accounting, per-campaign targeting,
@@ -543,11 +554,23 @@ patient-fundraiser/
 
 ## Visitor campaign submissions & admin review
 
-Anyone can tap **"+ Start a Fundraiser"** on the homepage to submit a new
+Anyone can tap **"+ Add a Patient"** on the homepage to submit a new
 patient campaign via `submit-campaign.html`, which collects the
 submitter's own contact info, the campaign details, and the
 beneficiary/payout details in one form, then posts them together to
 `POST /api/submit-campaign`.
+
+**A patient photo is required for every visitor submission.** The file
+input is marked `required` in the HTML, the form's own JS shows
+"Please upload a photo of the patient before submitting this campaign."
+if someone tries to submit without one, and — since neither of those
+can be trusted on their own — `api/submit-campaign.js` rejects the
+request server-side (`400`, same error message) if `fileBase64` /
+`contentType` are missing, before any campaign row is ever created.
+This only applies to new visitor submissions; it does not touch any
+existing campaign's photo, and the admin dashboard's own "Add New
+Campaign" form (where an admin creates a campaign directly) still
+treats the photo as optional, unchanged.
 
 **A visitor submission is never published or payable immediately.** It
 always starts as:
@@ -638,6 +661,129 @@ How it works, end to end:
    accordingly, and a link to the live public campaign page once
    approved. An invalid, missing, or unknown token shows a friendly
    error — never a raw database error.
+
+## KODEP branding and homepage UI
+
+The public site carries KODEP's own identity rather than a generic
+"fundraiser" look:
+
+- **Header** — a two-tone "KODEP" text logo (pink `KOD` + navy `EP`,
+  pure CSS, no image file) with "Kidney and Other Disease Eradication
+  Program" and "Enugu State, Nigeria" underneath, on `index.html`,
+  `privacy-policy.html`, and `terms.html`.
+- **Hero section** — "Support Patients in Need" / "Help patients raise
+  funds for critical medical treatment." on the homepage, above the
+  campaign grid.
+- **"+ Add a Patient"** — the homepage's visitor-submission button
+  (same link/functionality as the old "+ Start a Fundraiser" button,
+  wording only).
+- **Campaign cards** — every campaign photo displays at a consistent
+  5:6 portrait ratio (`object-fit: cover`, biased toward the top of the
+  frame) so the grid looks uniform regardless of each photo's original
+  shape; cards rely on rounded corners and a soft shadow rather than a
+  border.
+- **Campaign detail photo** — deliberately styled *differently* from
+  the homepage: `object-fit: contain` at the same 5:6 ratio, so the
+  full uploaded photo (including the patient's face) is always fully
+  visible on `campaign.html`, never cropped. The homepage's `cover`
+  crop and the detail page's `contain` letterbox are an intentional
+  pair, not an inconsistency — cards need uniform thumbnails, the
+  detail page needs the whole photo.
+- **Form styling reference** — `submit-campaign.html` is this
+  project's single source of truth for form appearance (bold labels,
+  `#d1d5db` input borders, `10px` border radius, `+234...` phone
+  placeholders, inline SVG search icons). The admin dashboard's Add
+  Campaign / Edit Campaign / Beneficiary forms and `admin/login.html`
+  all reuse these same values rather than defining their own.
+- **How It Works** — a compact, 4-step section (Find a Patient → View
+  Their Story → Make a Donation → Help Make a Difference) directly
+  below the campaign grid, using numbered pink circles. Purely static
+  content — no data, no API calls.
+- **FAQ** — an accordion of 15 questions directly below How It Works,
+  above the footer. Built with native `<button>` elements (one per
+  question) so it's keyboard-accessible out of the box; only one answer
+  is open at a time, and the +/− icon plus `aria-expanded` both change
+  together, so the open/closed state never relies on colour alone. Its
+  JavaScript lives in its own separate, self-contained `<script>` block
+  at the bottom of `index.html` (an IIFE) — it only ever touches its
+  own `.faq-question` / `.faq-answer` elements and shares no variables
+  with the campaign-loading/search script above it.
+
+None of this touched any calculation, validation, or API logic —
+styling and wording only.
+
+## Fee transparency (live pre-payment breakdown)
+
+`campaign.html` shows a donor a real-time breakdown as they type a
+donation amount, before they pay anything:
+
+```
+Donation amount              ₦20,000
+Payment processing fee         ₦175
+Platform maintenance fee        ₦50
+Campaign receives            ₦19,775
+```
+
+- **Donation amount** — the raw typed value.
+- **Payment processing fee** — this project has never calculated
+  Paystack's own transaction fee anywhere in advance (the real figure
+  is only known once Paystack processes the payment — see
+  `api/paystack-webhook.js`'s `FEE ACCOUNTING` comment). This row is
+  therefore an *estimate*, computed client-side using Paystack's own
+  published standard Nigerian card rate (1.5% + ₦100, waived under
+  ₦2,500, capped at ₦2,000), clearly flagged as an estimate in the
+  small note under the breakdown.
+- **Platform maintenance fee** — reuses the *exact* server-side formula
+  (1% of the donation, capped at ₦1,000 — see
+  `api/initialize-donation.js`). This row only appears at all when it
+  would actually be charged: the platform-fee master switch is on
+  *and* this specific campaign currently has a verified,
+  settlement-enabled beneficiary. `api/campaign.js` exposes two
+  read-only booleans (`platform_fee_enabled`, `platform_fee_applicable`)
+  computed with those same conditions so this preview can never show a
+  fee that checkout wouldn't actually charge, or hide one it would.
+  When not applicable, the row is hidden entirely rather than showing
+  "₦0".
+- **Campaign receives** — donation minus both fees, present tense
+  (it's a preview of what will happen, not a completed transaction),
+  shown in green, never negative.
+
+Separately, each entry in **Recent Donors** shows the *actual* fees
+that were charged on that specific completed donation (from
+`donations.paystack_fee` / `donations.platform_fee`, recorded by
+`api/paystack-webhook.js` at the moment of payment) — past tense
+("Campaign received"), and the platform maintenance fee segment there
+is likewise only shown when it was actually non-zero for that
+donation. The live preview and the historical record are two separate,
+intentionally different displays; neither was made to imitate the
+other.
+
+## Privacy Policy, Terms of Service, and consent
+
+- **`privacy-policy.html`** / **`terms.html`** — standalone public
+  pages, styled with the same KODEP header/card language as the rest of
+  the site. Official contact details used throughout both:
+  `ojinwayoo@gmail.com`, `08062842257`, Umuafia Village, Near Market
+  Square, Orba, Nsukka, Enugu State, Nigeria. (Not `support@kodep.org`
+  — that's reserved for a future custom domain.)
+- **Consent checkboxes** — `submit-campaign.html` requires two checked
+  boxes before a submission can go through, using plain HTML5
+  `required` on each `<input type="checkbox">` (the same mechanism
+  every other required field in that form already uses, so the
+  existing submit handler needed no changes):
+  1. Patient-authorization confirmation.
+  2. "I have read and understand the Privacy Policy and Terms of
+     Service," with both terms linking to the pages above (opened in a
+     new tab so the form isn't lost).
+  Neither checkbox's state is read into the submission payload — they
+  are pure client-side gates in front of the existing, unchanged API
+  call.
+- **Admin Login is no longer linked from any public page.** It used to
+  appear as a small link at the bottom of `index.html`; that's been
+  replaced with a footer linking to Privacy Policy and Terms of
+  Service instead. `admin/login.html` itself is unchanged and fully
+  reachable by anyone who has its direct URL — nothing about
+  authentication, sessions, or the login flow changed.
 
 ## Environment variables reference
 | Variable | Where it's used | Keep secret? |
@@ -1278,6 +1424,39 @@ Resend returned). Also check your spam folder, and confirm
 `onboarding@resend.dev`) or set to a domain/address actually verified
 in your Resend account — Resend will reject sends from an unverified
 custom domain.
+
+## Testing checklist — legal pages, consent, and branding
+
+1. **Privacy Policy / Terms pages** — open `privacy-policy.html` and
+   `terms.html` directly. Confirm the KODEP header renders, all 15 /
+   23 sections are present, the contact block shows
+   `ojinwayoo@gmail.com` / `08062842257` / the Umuafia Village address,
+   and each page links to the other plus back to the homepage.
+2. **Consent checkboxes block submission** — open
+   `submit-campaign.html`, fill in every other required field, but
+   leave both new checkboxes unchecked, then tap **Submit for Review**.
+   Expect the browser's own validation to stop the submission (no
+   network request fires) and point at the first unchecked box.
+3. **Links inside the consent text work** — tap "Privacy Policy" and
+   "Terms of Service" inside the second checkbox's label. Expect each
+   to open the corresponding page in a new tab without losing anything
+   already typed into the form.
+4. **Submission still succeeds once both are checked** — check both
+   boxes, submit. Expect the exact same success screen and tracking
+   link as before this change — the checkboxes are never sent to
+   `/api/submit-campaign`.
+5. **Admin Login is gone from the public homepage** — open
+   `index.html` on a phone and desktop width. Confirm there is no
+   "Admin Login" link anywhere, and that the footer instead shows
+   Privacy Policy / Terms of Service.
+6. **Admin Login itself still works** — go directly to
+   `admin/login.html`. Confirm the page loads, is styled consistently
+   with the rest of the site, and logging in still reaches the
+   dashboard exactly as before.
+7. **Mobile check** — at a narrow phone width, confirm the KODEP
+   header, hero section, footer links, and consent-checkbox text all
+   wrap normally with no horizontal scrolling anywhere on `index.html`,
+   `submit-campaign.html`, `privacy-policy.html`, or `terms.html`.
 
 ## Notes for beginners
 - GitHub, Supabase, and Vercel all work through their websites in Chrome
