@@ -150,7 +150,73 @@
   th, td { text-align: left; padding: 12px 14px; font-size: 0.88rem; border-bottom: 1px solid #f0f0f3; }
   th { color: var(--text-muted); font-weight: 600; font-size: 0.78rem; text-transform: uppercase; }
   td.name-cell { display: flex; align-items: center; gap: 10px; }
-  td.name-cell img { width: 36px; height: 36px; object-fit: cover; border-radius: 8px; background: #f0f0f3; }
+  /* Reasonably large, uncropped thumbnail — object-fit: contain (not
+     cover) so the complete uploaded photo is always visible here,
+     never cropped, before an admin even opens the full lightbox view
+     below. Clickable to open that full-size view. */
+  td.name-cell img {
+    width: 58px;
+    height: 72px;
+    object-fit: contain;
+    border-radius: 8px;
+    background: #f0f0f3;
+    cursor: pointer;
+  }
+
+  /* ==========================================================
+     PHOTO LIGHTBOX — admin-only, full uncropped patient photo.
+     Tapping/clicking the small thumbnail above opens this. Uses the
+     exact same image_url already loaded for the thumbnail — no second
+     upload, no duplicate file, nothing fetched from anywhere new.
+     ========================================================== */
+  .photo-lightbox-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(17, 24, 39, 0.82);
+    z-index: 200;
+    align-items: center;
+    justify-content: center;
+    padding: 24px 16px;
+  }
+  .photo-lightbox-overlay.open { display: flex; }
+  .photo-lightbox {
+    position: relative;
+    max-width: 94vw;
+    max-height: 90vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .photo-lightbox img {
+    display: block;
+    max-width: 94vw;
+    max-height: 90vh;
+    width: auto;
+    height: auto;
+    object-fit: contain;
+    border-radius: 10px;
+    background: #fff;
+  }
+  .photo-lightbox-close {
+    position: absolute;
+    top: -14px;
+    right: -14px;
+    width: 34px;
+    height: 34px;
+    border-radius: 50%;
+    background: #fff;
+    color: var(--text-dark);
+    border: none;
+    font-size: 1.2rem;
+    line-height: 1;
+    cursor: pointer;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+  }
+  .photo-lightbox-close:hover { background: #f3f4f6; }
+  @media (max-width: 480px) {
+    .photo-lightbox-close { top: -12px; right: 4px; }
+  }
 
   .badge {
     display: inline-block;
@@ -552,6 +618,16 @@
   </div>
 </div>
 
+<!-- Full-size patient photo lightbox — opened by tapping/clicking the
+     thumbnail in the campaign table. Reuses the campaign's existing
+     image_url as-is; no second upload or duplicate file involved. -->
+<div class="photo-lightbox-overlay" id="photoLightboxOverlay">
+  <div class="photo-lightbox">
+    <button type="button" class="photo-lightbox-close" id="photoLightboxClose" aria-label="Close photo">&times;</button>
+    <img id="photoLightboxImg" src="" alt="Full-size patient photo" />
+  </div>
+</div>
+
 <script>
   /*
     =========================================================
@@ -927,7 +1003,7 @@
       return `
       <tr>
         <td class="name-cell">
-          <img src="${escapeHtml(c.image_url || '../images/lucy.jpg')}" alt="" />
+          <img src="${escapeHtml(c.image_url || '../images/lucy.jpg')}" alt="" onclick="openPhotoLightbox('${escapeJs(c.image_url || '../images/lucy.jpg')}')" />
           <span>${escapeHtml(c.patient_name)}</span>
         </td>
         <td class="nowrap">₦${goal.toLocaleString()}</td>
@@ -1180,6 +1256,38 @@
       alert('Could not copy automatically. Here is the link:\n' + publicUrl);
     }
   };
+
+  // Opens the full-size patient photo lightbox using the SAME
+  // image_url already loaded for the small table thumbnail — no
+  // second fetch, no duplicate upload, just displaying the existing
+  // file uncropped (object-fit: contain, see CSS) at a much larger
+  // size so an admin can properly inspect it before approving/
+  // rejecting a campaign.
+  const photoLightboxOverlay = document.getElementById('photoLightboxOverlay');
+  const photoLightboxImg = document.getElementById('photoLightboxImg');
+  const photoLightboxClose = document.getElementById('photoLightboxClose');
+
+  window.openPhotoLightbox = function (imageUrl) {
+    photoLightboxImg.src = imageUrl;
+    photoLightboxOverlay.classList.add('open');
+  };
+
+  function closePhotoLightbox() {
+    photoLightboxOverlay.classList.remove('open');
+    photoLightboxImg.src = '';
+  }
+
+  photoLightboxClose.addEventListener('click', closePhotoLightbox);
+  // Clicking the dark backdrop (but not the photo itself) also closes it.
+  photoLightboxOverlay.addEventListener('click', (e) => {
+    if (e.target === photoLightboxOverlay) closePhotoLightbox();
+  });
+  // Escape key closes it too, same as a typical lightbox/modal.
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && photoLightboxOverlay.classList.contains('open')) {
+      closePhotoLightbox();
+    }
+  });
 
   window.deleteCampaign = async function (id, patientName) {
     if (!confirm(`Permanently delete ${patientName}'s campaign? This cannot be undone.`)) return;
