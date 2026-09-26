@@ -474,8 +474,10 @@ patient-fundraiser/
 │                                    # so Vercel's build/bundling has no ESM/CommonJS ambiguity to resolve.
 │                                    # Also lists the "resend" package (Vercel runs `npm install` automatically).
 ├── index.html                      # Public homepage: KODEP header/logo, hero section, campaign
-│                                    # cards (pink border, 5:6 photo), "+ Add a Patient" button,
-│                                    # footer with Privacy Policy / Terms of Service links
+│                                    # cards (5:6 photo, no border), "+ Add a Patient" button,
+│                                    # How It Works (4 steps), FAQs accordion (20 questions),
+│                                    # footer with Privacy Policy / Terms of Service links,
+│                                    # contact info, and a copyright line
 ├── campaign.html                   # Public campaign details page — donate button calls
 │                                    # /api/initialize-donation and redirects to Paystack's
 │                                    # hosted checkout (no PaystackPop / public key used here anymore);
@@ -497,7 +499,8 @@ patient-fundraiser/
 │                                      # beneficiary/settlement UI (searchable bank field), Platform
 │                                      # Fee master switch, submitter contact info (admin-only column),
 │                                      # rejection-reason prompt on Reject, Copy Public Link on active
-│                                      # campaigns, responsive wrapping Actions column
+│                                      # campaigns, responsive wrapping Actions column, uncropped
+│                                      # photo thumbnail + full-size lightbox on click
 ├── images/
 │   └── lucy.jpg                      # Fallback image used if a campaign has no photo
 ├── lib/
@@ -699,18 +702,52 @@ The public site carries KODEP's own identity rather than a generic
   Their Story → Make a Donation → Help Make a Difference) directly
   below the campaign grid, using numbered pink circles. Purely static
   content — no data, no API calls.
-- **FAQ** — an accordion of 15 questions directly below How It Works,
-  above the footer. Built with native `<button>` elements (one per
-  question) so it's keyboard-accessible out of the box; only one answer
-  is open at a time, and the +/− icon plus `aria-expanded` both change
-  together, so the open/closed state never relies on colour alone. Its
-  JavaScript lives in its own separate, self-contained `<script>` block
-  at the bottom of `index.html` (an IIFE) — it only ever touches its
-  own `.faq-question` / `.faq-answer` elements and shares no variables
-  with the campaign-loading/search script above it.
+- **FAQ** — an accordion of 20 questions directly below How It Works,
+  above the footer, titled "FAQs" (left-aligned, unlike the centered
+  "How It Works" heading above it). Built with native `<button>`
+  elements (one per question) so it's keyboard-accessible out of the
+  box; only one answer is open at a time, and the +/− icon plus
+  `aria-expanded` both change together, so the open/closed state never
+  relies on colour alone. Its JavaScript lives in its own separate,
+  self-contained `<script>` block at the bottom of `index.html` (an
+  IIFE) — it only ever touches its own `.faq-question` / `.faq-answer`
+  elements and shares no variables with the campaign-loading/search
+  script above it. Question/answer font size is intentionally smaller
+  than the rest of the page's body text, matching "How It Works"'s
+  step text size.
+- **Footer** — Privacy Policy / Terms of Service links, KODEP's contact
+  block (org name, location, `ojinwayoo@gmail.com`, `08062842257`), and
+  a "© `<current year>` KODEP. All rights reserved." line. The year is
+  filled in by a tiny, separate, self-contained script
+  (`document.getElementById('footerYear')`) so it never needs a manual
+  yearly edit.
 
 None of this touched any calculation, validation, or API logic —
 styling and wording only.
+
+## Admin dashboard: full-size patient photo review
+
+Reviewing a **pending** campaign requires actually seeing the whole
+patient photo, so `admin/dashboard.html`'s campaign table now shows it
+uncropped in two stages:
+
+1. The table's own thumbnail switched from a small `object-fit: cover`
+   square (which could crop the photo) to a taller `object-fit: contain`
+   box, so the complete photo is visible even at a glance, before an
+   admin clicks anything.
+2. Clicking/tapping that thumbnail opens a lightbox — sized up to 94%
+   of the viewport width and 90% of its height, `object-fit: contain`
+   — showing the exact same `image_url` already loaded for the
+   thumbnail (no second fetch, no duplicate file). It closes via its ×
+   button, clicking the dark backdrop, or pressing Escape.
+
+This applies to every row in the table (not just the Pending tab, since
+it's the same shared thumbnail markup for every status), and is purely
+a display change — it does not touch `lib/campaign-images.js`, upload
+logic, Supabase Storage, or any existing `image_url` on any campaign.
+The public homepage's 5:6 `cover` card thumbnails and `campaign.html`'s
+5:6 `contain` detail photo (see above) are both completely unaffected;
+this is a third, admin-only presentation of the same file.
 
 ## Fee transparency (live pre-payment breakdown)
 
