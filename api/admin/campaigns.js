@@ -6,7 +6,7 @@
 //
 // Supported requests:
 //   GET    /api/admin/campaigns              -> list every campaign (active + archived + pending + rejected)
-//   GET    /api/admin/campaigns?search=lucy  -> list campaigns whose name matches
+//   GET    /api/admin/campaigns?search=patient  -> list campaigns whose name matches
 //   POST   /api/admin/campaigns              -> create a new campaign TOGETHER WITH its beneficiary
 //   PATCH  /api/admin/campaigns?id=123       -> edit an existing campaign (also used for approve/reject/archive/reactivate)
 //   DELETE /api/admin/campaigns?id=123       -> permanently delete a campaign
@@ -73,7 +73,7 @@ function supabaseHeaders(key, extra = {}) {
   };
 }
 
-// Turn "Lucy Adebayo" into something like "lucy-adebayo-a1b2c3d4e5" — a
+// Turn "Amara Okafor" into something like "amara-okafor-a1b2c3d4e5" — a
 // clean, unique, URL-friendly identifier for the campaign's public page.
 //
 // Uses 5 random bytes (10 hex characters = ~1.1 trillion combinations).
