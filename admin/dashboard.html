@@ -856,6 +856,15 @@
   const searchInput = document.getElementById('searchInput');
   const campaignTableBody = document.getElementById('campaignTableBody');
   let currentCampaignsCache = []; // filled in each time the table loads, used by Edit
+
+  // Neutral "no photo" placeholder for the rare case a campaign record
+  // has no image_url at all (a patient photo is required for every new
+  // submission — see submit-campaign.html — so this only matters for
+  // an older pre-existing record). A plain inline SVG icon, not a
+  // photo of any person, so nothing personal is ever shown here and no
+  // extra image file needs to exist in this project.
+  const NO_PHOTO_PLACEHOLDER =
+    "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 240'%3E%3Crect width='200' height='240' fill='%23f0f0f3'/%3E%3Ccircle cx='75' cy='78' r='18' fill='%23d1d5db'/%3E%3Cpath d='M20 200 L80 130 L120 165 L150 118 L190 200 Z' fill='%23d1d5db'/%3E%3C/svg%3E";
   let currentTab = 'active'; // which of the four tabs is currently shown
   let beneficiarySummaries = {}; // fundraiser_id -> masked beneficiary summary, for the table's Beneficiary column
 
@@ -1003,7 +1012,7 @@
       return `
       <tr>
         <td class="name-cell">
-          <img src="${escapeHtml(c.image_url || '../images/lucy.jpg')}" alt="" onclick="openPhotoLightbox('${escapeJs(c.image_url || '../images/lucy.jpg')}')" />
+          <img src="${escapeHtml(c.image_url || NO_PHOTO_PLACEHOLDER)}" alt="" onclick="openPhotoLightbox('${escapeJs(c.image_url || NO_PHOTO_PLACEHOLDER)}')" />
           <span>${escapeHtml(c.patient_name)}</span>
         </td>
         <td class="nowrap">₦${goal.toLocaleString()}</td>
