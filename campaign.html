@@ -387,12 +387,21 @@
     =========================================================
     STEP 0: WORK OUT WHICH CAMPAIGN TO SHOW
     =========================================================
-    The homepage links here as campaign.html?slug=lucy-x7k2.
+    The homepage links here as campaign.html?slug=patient-name-example.
     We read that slug from the URL, then ask our backend for
     that specific patient's full details.
   */
   const urlParams = new URLSearchParams(window.location.search);
   const slug = urlParams.get('slug');
+
+  // Neutral "no photo" placeholder for the rare case a campaign record
+  // has no image_url at all (a patient photo is required for every new
+  // submission — see submit-campaign.html — so this only matters for
+  // an older pre-existing record). A plain inline SVG icon, not a
+  // photo of any person, so nothing personal is ever shown here and no
+  // extra image file needs to exist in this project.
+  const NO_PHOTO_PLACEHOLDER =
+    "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 240'%3E%3Crect width='200' height='240' fill='%23f0f0f3'/%3E%3Ccircle cx='75' cy='78' r='18' fill='%23d1d5db'/%3E%3Cpath d='M20 200 L80 130 L120 165 L150 118 L190 200 Z' fill='%23d1d5db'/%3E%3C/svg%3E";
 
   const pageContent = document.getElementById('pageContent');
 
@@ -423,7 +432,7 @@
   function renderCampaign(campaign) {
     document.title = `Help ${campaign.patient_name}`;
 
-    const imageUrl = campaign.image_url || 'images/lucy.jpg';
+    const imageUrl = campaign.image_url || NO_PHOTO_PLACEHOLDER;
     const archivedBadge = campaign.status === 'archived'
       ? '<span class="archived-badge">This campaign has ended — thank you to everyone who gave 💛</span><br/>'
       : '';
