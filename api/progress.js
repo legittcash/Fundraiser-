@@ -4,19 +4,22 @@
 // It runs on Vercel's server (never in the visitor's browser), so it's
 // safe to use our Supabase SERVICE ROLE key here.
 //
-// The original single-campaign page called this with no parameters:
-//     fetch('/api/progress')
-// and got back the one and only fundraiser row. Now that the site hosts
-// unlimited campaigns, campaign.html calls it with the specific campaign
-// it's showing:
+// This is a multi-campaign platform, so every request MUST explicitly
+// identify which campaign it wants — campaign.html always calls this
+// with the specific campaign it's showing:
 //     fetch('/api/progress?id=123')       // by numeric id, or
-//     fetch('/api/progress?slug=lucy-x7k2') // by slug
+//     fetch('/api/progress?slug=patient-name-example') // by slug
 //
-// Calling it with no parameters at all still works exactly like before
-// (returns the first fundraiser row) so any old bookmarked pages or
-// cached frontend code don't break.
+// There is no "default" campaign to fall back to. An earlier version of
+// this file silently returned whichever campaign happened to be first
+// in the table when neither id nor slug was supplied — on a platform
+// with many independent campaigns, that risks one campaign's progress
+// being shown for a completely different one, so that fallback has been
+// removed: a request with neither id nor slug is now rejected with 400,
+// and a request for an id/slug that doesn't match any campaign is
+// rejected with 404.
 //
-// Either way, the JSON shape stays the same:
+// A successful response's JSON shape is unchanged:
 //     { raised_amount: 500, goal_amount: 1000, donor_count: 3 }
 
 // We use plain "fetch" to talk to Supabase's REST API (PostgREST),
@@ -45,19 +48,16 @@ export default async function handler(req, res) {
 
   const { id, slug } = req.query;
 
-  // Build the filter for whichever campaign was asked for. If neither
-  // "id" nor "slug" was given, we fall back to the original behavior:
-  // just grab the first row (this only makes sense while there's a
-  // single campaign, but keeps any old integration from breaking).
-  let filter = '';
-  if (id) {
-    filter = `&id=eq.${encodeURIComponent(id)}`;
-  } else if (slug) {
-    filter = `&slug=eq.${encodeURIComponent(slug)}`;
+  // A campaign must be explicitly identified — no fallback to "just
+  // grab the first one".
+  if (!id && !slug) {
+    return res.status(400).json({ error: 'A campaign id or slug is required.' });
   }
 
+  const filter = id ? `&id=eq.${encodeURIComponent(id)}` : `&slug=eq.${encodeURIComponent(slug)}`;
+
   try {
-    // Ask Supabase's auto-generated REST API for the matching row(s)
+    // Ask Supabase's auto-generated REST API for the one matching row
     // in the "public.fundraiser" table. We select just the columns we need.
     const response = await fetch(
       `${SUPABASE_BASE_URL}/rest/v1/fundraiser?select=raised_amount,goal_amount,donor_count${filter}&limit=1`,
@@ -79,8 +79,9 @@ export default async function handler(req, res) {
     const rows = await response.json();
 
     if (!rows || rows.length === 0) {
-      // No row found — return safe defaults so the page doesn't break
-      return res.status(200).json({ raised_amount: 0, goal_amount: 1000, donor_count: 0 });
+      // The requested campaign genuinely doesn't exist — never silently
+      // substitute a different campaign's data.
+      return res.status(404).json({ error: 'Campaign not found.' });
     }
 
     // Send the fundraiser stats back to the frontend as JSON

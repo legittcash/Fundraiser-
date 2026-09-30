@@ -4,7 +4,7 @@
 // active patient campaign, with an optional search box.
 //
 //   GET /api/campaigns              -> all active campaigns
-//   GET /api/campaigns?search=lucy  -> active campaigns matching "lucy"
+//   GET /api/campaigns?search=patient  -> active campaigns matching "patient"
 //
 // This never exposes archived campaigns, and only returns the fields the
 // homepage cards actually need.

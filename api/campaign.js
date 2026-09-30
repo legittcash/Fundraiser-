@@ -3,7 +3,7 @@
 // Public endpoint used by campaign.html to load one patient's full
 // fundraising page: photo, story, goal, live totals, etc.
 //
-//   GET /api/campaign?slug=lucy-x7k2
+//   GET /api/campaign?slug=patient-name-example
 //
 // Archived campaigns can still be viewed directly by anyone who has the
 // link (e.g. past donors checking back), they just won't appear in the
