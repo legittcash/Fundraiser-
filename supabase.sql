@@ -16,7 +16,7 @@ create table if not exists fundraiser (
 
 -- 2. Insert the initial fundraiser row only when the table is empty.
 -- This makes the script safe to run again on an existing database.
--- If Lucy (or any existing campaign) is already present, nothing is inserted.
+-- If a row is already present, nothing is inserted.
 insert into fundraiser (raised_amount, goal_amount, donor_count)
 select 0, 1000, 0
 where not exists (select 1 from fundraiser);
@@ -53,13 +53,13 @@ alter table donations enable row level security;
 -- =========================================================================
 -- ADMIN DASHBOARD / MULTI-CAMPAIGN SCHEMA UPDATES
 -- =========================================================================
--- Everything below turns the single "Lucy" fundraiser into a platform that
--- can host unlimited patient campaigns, managed from the admin dashboard.
--- These statements are safe to run even on a database that already has
--- data in it. Existing rows are preserved, columns are added only when
--- missing, and the backfill step only fills in blanks. The initial seed
--- row above is also conditional, so it cannot recreate Lucy or create a
--- duplicate fundraiser when this file is run again.
+-- Everything below turns that single starting fundraiser row into a
+-- platform that can host unlimited patient campaigns, managed from the
+-- admin dashboard. These statements are safe to run even on a database
+-- that already has data in it. Existing rows are preserved, columns are
+-- added only when missing, and the backfill step only fills in blanks.
+-- The initial seed row above is also conditional, so it cannot create a
+-- duplicate seed row or duplicate fundraiser when this file is run again.
 
 -- 6. Add the new campaign fields to "fundraiser"
 alter table fundraiser add column if not exists patient_name text;
@@ -82,21 +82,30 @@ begin
   end if;
 end $$;
 
--- Every campaign needs a unique, URL-friendly "slug" (e.g. "lucy-x7k2") so
--- the public site can link to /campaign.html?slug=lucy-x7k2
+-- Every campaign needs a unique, URL-friendly "slug" (e.g. "patient-x7k2")
+-- so the public site can link to /campaign.html?slug=patient-x7k2
 create unique index if not exists fundraiser_slug_key on fundraiser (slug);
 
--- 7. Backfill your existing "Lucy" row so it keeps working as a proper
--- campaign on the new multi-campaign homepage, instead of disappearing.
--- (Only fills in the row that has no patient_name yet — safe to re-run.)
-update fundraiser
-set
-  patient_name = coalesce(patient_name, 'Lucy'),
-  story = coalesce(story, 'Lucy urgently needs financial support for surgery, chemotherapy, hospital care, and medication.'),
-  image_url = coalesce(image_url, '/images/lucy.jpg'),
-  slug = coalesce(slug, 'lucy'),
-  status = coalesce(status, 'active')
-where patient_name is null;
+-- 7. (Historical step — intentionally removed as part of retiring the
+-- project's old "Lucy" placeholder branding.)
+--
+-- This step used to backfill the platform's single original campaign
+-- row with placeholder content (patient_name = 'Lucy', a generic
+-- fundraising story, and a local /images/lucy.jpg fallback image) so
+-- that one row would keep working once the homepage became a
+-- multi-campaign listing. That placeholder content has been retired
+-- now that the project is KODEP and every new campaign is required to
+-- come with real patient details and a real patient photo, supplied
+-- through the submission form (see submit-campaign.html and
+-- api/submit-campaign.js). Running the old version of this step today
+-- would recreate stale "Lucy" placeholder content and point at an
+-- image file (images/lucy.jpg) that no longer exists in this project.
+--
+-- If a legacy row with a null patient_name still exists in your
+-- database, fill in that specific row's real patient details directly
+-- (through the admin dashboard's Edit Campaign form, or a one-off
+-- UPDATE scoped to that row's own id) rather than restoring a
+-- Lucy-flavoured backfill here.
 
 -- 8. Let a campaign be deleted cleanly, taking its donation history with
 -- it (so deleting a campaign in the admin dashboard never fails with a
@@ -156,8 +165,8 @@ alter table donations add column if not exists anonymous boolean not null defaul
 -- arithmetic.
 --
 -- IMPORTANT: phone_number is NOT declared "not null" here, on purpose.
--- Existing campaigns (including the original "Lucy" row) were created
--- before this field existed and have no phone number on file — adding a
+-- Existing campaigns (including campaigns created before this field
+-- existed) have no phone number on file — adding a
 -- database-level NOT NULL constraint without backfilling every existing
 -- row first would break them immediately. Instead, the requirement that
 -- NEW campaigns must have a primary phone number is enforced in the

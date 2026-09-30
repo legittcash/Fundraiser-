@@ -1,7 +1,7 @@
-# Patient Fundraising Platform — Server-Controlled Settlement & Platform Fee
+# KODEP — Kidney and Other Disease Eradication Program
 
-A real, working fundraising platform that hosts **unlimited patient
-campaigns**, accepts **real Paystack payments**, tracks the exact
+A real, working patient fundraising platform that hosts **unlimited
+patient campaigns**, accepts **real Paystack payments**, tracks the exact
 gross/Paystack-fee/platform-fee/net breakdown of every donation, and can
 **automatically settle a share of each donation to a verified
 beneficiary's bank account** — with the server, never the browser, as
@@ -9,10 +9,6 @@ the final authority over where money goes. Everything is managed from a
 password-protected admin dashboard.
 
 Built with plain HTML/CSS/JS, Vercel Serverless Functions, and Supabase.
-
-> ⚠️ This started as a single campaign for "Lucy." That campaign still
-> works and now lives at `campaign.html?slug=lucy` — see step 4's SQL for
-> how it's migrated forward automatically.
 
 ---
 
@@ -501,8 +497,8 @@ patient-fundraiser/
 │                                      # rejection-reason prompt on Reject, Copy Public Link on active
 │                                      # campaigns, responsive wrapping Actions column, uncropped
 │                                      # photo thumbnail + full-size lightbox on click
-├── images/
-│   └── lucy.jpg                      # Fallback image used if a campaign has no photo
+├── images/                          # (empty) previously held a local fallback image;
+│                                    # removed — see "No-photo placeholder" below
 ├── lib/
 │   ├── admin-auth.js                  # Shared login-session helper used by admin APIs
 │   ├── campaign-images.js             # Shared helper: upload/delete campaign photos in Storage
@@ -574,6 +570,15 @@ This only applies to new visitor submissions; it does not touch any
 existing campaign's photo, and the admin dashboard's own "Add New
 Campaign" form (where an admin creates a campaign directly) still
 treats the photo as optional, unchanged.
+
+**No-photo placeholder.** A small number of very old campaign records
+(from before a photo was ever required) may still have no `image_url`
+at all. Rather than falling back to a local placeholder image file, the
+homepage, campaign detail page, and admin dashboard all fall back to a
+tiny inline SVG icon (a plain neutral "no photo" glyph, defined directly
+in each page's own script as `NO_PHOTO_PLACEHOLDER`) — no image file is
+shipped in this project for this purpose, and nothing personal is ever
+displayed as a stand-in for a missing photo.
 
 **A visitor submission is never published or payable immediately.** It
 always starts as:
@@ -868,7 +873,7 @@ confirmations plus approval/rejection notices).
 
 ### 2. Create a Resend API key
 In the Resend dashboard, go to **API Keys** → **Create API Key**. Give
-it a name (e.g. "Lucy Fundraiser production") and copy the key — you
+it a name (e.g. "KODEP production") and copy the key — you
 won't be able to see it again after leaving the page.
 
 ### 3. Add `RESEND_API_KEY` to Vercel Environment Variables
@@ -881,13 +886,13 @@ Vercel project → **Settings** → **Environment Variables** → add:
 This is the "from" address emails are sent from. Add:
 - **Key:** `RESEND_FROM_EMAIL`
 - **Value (example, works immediately with no setup):**
-  `Lucy Fundraiser <onboarding@resend.dev>`
+  `KODEP <onboarding@resend.dev>`
 
 `onboarding@resend.dev` is Resend's own shared sending address — it
 works right away with zero domain configuration, which is exactly what
 `lib/email.js` falls back to automatically if `RESEND_FROM_EMAIL` isn't
 set at all. When you're ready to send from your own domain (e.g.
-`notifications@lucyfundraiser.org`), verify that domain in Resend's
+`notifications@kodep.org`), verify that domain in Resend's
 dashboard, then just change this one environment variable — no code
 changes are needed anywhere, since every email function in
 `lib/email.js` reads the sender address from this variable at send
