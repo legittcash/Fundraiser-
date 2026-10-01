@@ -92,6 +92,22 @@
     margin-bottom: 4px;
   }
 
+  /* Public "Verified" badge, shown only when the API reports the
+     beneficiary as verified. */
+  .verified-row { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin: 2px 0 8px; }
+  .verified-badge {
+    display: inline-block;
+    background: #ffe4f0;
+    color: var(--pink-dark);
+    font-size: 0.8rem;
+    font-weight: 700;
+    line-height: 1;
+    padding: 5px 10px;
+    border-radius: 999px;
+    white-space: nowrap;
+  }
+  .verified-note { font-size: 0.78rem; color: var(--text-muted); }
+
   .archived-badge {
     display: inline-block;
     background: #fef3c7;
@@ -446,6 +462,7 @@
         <div class="content">
           <span class="name-tag">${escapeHtml(campaign.patient_name)}'s Story</span>
           ${campaign.hospital ? `<div class="hospital-tag">🏥 ${escapeHtml(campaign.hospital)}</div>` : ''}
+          ${campaign.beneficiary_verified === true ? '<div class="verified-row"><span class="verified-badge">✓ Verified</span><span class="verified-note">Beneficiary verified by KODEP.</span></div>' : ''}
           <h1>Help ${escapeHtml(campaign.patient_name)}${campaign.diagnosis ? ` Fight ${escapeHtml(campaign.diagnosis)}` : ''}</h1>
           ${archivedBadge}
 

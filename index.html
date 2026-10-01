@@ -207,6 +207,22 @@
     text-overflow: ellipsis;
   }
 
+  /* Public "Verified" badge: small pill under the patient name. Only
+     rendered when the API says beneficiary_verified is true. */
+  .verified-badge {
+    display: inline-block;
+    align-self: flex-start;
+    background: #ffe4f0;
+    color: var(--pink-dark);
+    font-size: 0.66rem;
+    font-weight: 700;
+    line-height: 1;
+    padding: 3px 7px;
+    border-radius: 999px;
+    margin: 0 0 4px;
+    white-space: nowrap;
+  }
+
   /* Same protection for long hospital names. */
   .campaign-hospital {
     color: var(--text-muted);
@@ -609,6 +625,7 @@
         <img class="campaign-img" src="${escapeHtml(imageUrl)}" alt="${escapeHtml(campaign.patient_name)}" />
         <div class="campaign-body">
           <div class="campaign-name">${escapeHtml(campaign.patient_name)}</div>
+          ${campaign.beneficiary_verified === true ? '<span class="verified-badge">✓ Verified</span>' : ''}
           ${campaign.hospital ? `<div class="campaign-hospital">🏥 ${escapeHtml(campaign.hospital)}</div>` : ''}
 
           <div class="campaign-stats-row">

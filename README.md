@@ -823,6 +823,31 @@ donation. The live preview and the historical record are two separate,
 intentionally different displays; neither was made to imitate the
 other.
 
+## Public "Verified" badge
+
+Campaign cards on the homepage and the campaign details page
+(`campaign.html`) show a small pink "✓ Verified" badge when the
+campaign's beneficiary has `verification_status = 'verified'` in the
+existing `beneficiaries` table. It uses no new table, column or
+migration.
+
+- `api/campaigns.js` (homepage list) adds one boolean,
+  `beneficiary_verified`, to each campaign. It runs a single extra
+  Supabase query that selects only `fundraiser_id` for verified
+  beneficiaries, so no beneficiary detail is ever read into the
+  response. If that lookup fails, the flags are all false and the
+  list still loads.
+- `api/campaign.js` (details page) adds the same boolean, taken from
+  the beneficiary lookup it already performed for the fee preview.
+- `settlement_enabled` is deliberately not part of the condition:
+  verified with settlement off still shows the badge; pending or
+  failed never does. Nothing is shown for unverified campaigns (no
+  "Pending" or "Not verified" text).
+- Recent Donors is unchanged and carries no badge.
+- When an admin verifies a beneficiary through the existing admin
+  workflow, the badge appears on the next page load; if the status is
+  no longer `verified`, it disappears.
+
 ## Informational pages
 
 `about-us.html`, `contact-us.html`, `our-mission.html`,
