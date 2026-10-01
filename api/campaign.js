@@ -41,6 +41,9 @@
 //                              split — and therefore no platform fee —
 //                              can actually be collected; see
 //                              api/initialize-donation.js STEP 4)
+// A third boolean, beneficiary_verified, drives the public "✓ Verified"
+// badge (true only when verification_status = 'verified', regardless
+// of settlement_enabled). It is likewise just a yes/no.
 // Nothing sensitive is exposed: no subaccount code, no bank details, no
 // verification status text — just the two yes/no answers a donor-facing
 // fee preview needs. The actual fee itself is still only ever computed,
@@ -113,6 +116,10 @@ export default async function handler(req, res) {
     // actually collect a platform fee? (same conditions STEP 2 of
     // api/initialize-donation.js checks) ----
     let platformFeeApplicable = false;
+    // Public "Verified" badge: true ONLY when verification_status is
+    // 'verified'. Independent of settlement_enabled. Just this one
+    // boolean is exposed; the beneficiary record itself never is.
+    let beneficiaryVerified = false;
     try {
       const beneficiaryRes = await fetch(
         `${SUPABASE_URL}/rest/v1/beneficiaries?select=verification_status,settlement_enabled,paystack_subaccount_code&fundraiser_id=eq.${encodeURIComponent(campaign.id)}&limit=1`,
@@ -121,6 +128,7 @@ export default async function handler(req, res) {
       if (beneficiaryRes.ok) {
         const beneficiaryRows = await beneficiaryRes.json();
         const beneficiary = beneficiaryRows[0];
+        beneficiaryVerified = !!beneficiary && beneficiary.verification_status === 'verified';
         const hasReadySubaccount =
           !!beneficiary &&
           beneficiary.settlement_enabled === true &&
@@ -137,6 +145,7 @@ export default async function handler(req, res) {
         ...campaign,
         platform_fee_enabled: platformFeeEnabled,
         platform_fee_applicable: platformFeeApplicable,
+        beneficiary_verified: beneficiaryVerified,
       },
     });
   } catch (err) {

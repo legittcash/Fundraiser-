@@ -7,7 +7,8 @@
 //   GET /api/campaigns?search=patient  -> active campaigns matching "patient"
 //
 // This never exposes archived campaigns, and only returns the fields the
-// homepage cards actually need.
+// homepage cards actually need. Each campaign also carries a single
+// yes/no field, beneficiary_verified, for the public "Verified" badge.
 
 export default async function handler(req, res) {
   if (req.method !== 'GET') {
@@ -46,7 +47,42 @@ export default async function handler(req, res) {
     }
 
     const campaigns = await response.json();
-    return res.status(200).json({ campaigns });
+
+    // ---- Public "Verified" badge flag ----
+    // Adds ONE boolean, beneficiary_verified, per campaign. It is true
+    // only when that campaign's beneficiary row has
+    // verification_status = 'verified' (settlement_enabled is
+    // deliberately NOT considered: verification and settlement are
+    // separate concepts). Only the fundraiser_id column of matching
+    // rows is selected, so no beneficiary detail ever leaves the
+    // server. If this lookup fails, every flag is simply false and the
+    // campaign list still loads normally.
+    const verifiedIds = new Set();
+    try {
+      const ids = campaigns.map((c) => c.id).filter(Boolean);
+      for (let i = 0; i < ids.length; i += 100) {
+        const chunk = ids.slice(i, i + 100).map(encodeURIComponent).join(',');
+        const bRes = await fetch(
+          `${SUPABASE_URL}/rest/v1/beneficiaries?select=fundraiser_id&verification_status=eq.verified&fundraiser_id=in.(${chunk})`,
+          {
+            headers: {
+              apikey: SUPABASE_SERVICE_ROLE_KEY,
+              Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+            },
+          }
+        );
+        if (!bRes.ok) continue;
+        (await bRes.json()).forEach((row) => verifiedIds.add(row.fundraiser_id));
+      }
+    } catch (err) {
+      console.warn('Could not check beneficiary verification; no badges will show.', err);
+    }
+
+    const campaignsWithBadge = campaigns.map((c) => ({
+      ...c,
+      beneficiary_verified: verifiedIds.has(c.id),
+    }));
+    return res.status(200).json({ campaigns: campaignsWithBadge });
   } catch (err) {
     console.error('Unexpected error in /api/campaigns:', err);
     return res.status(500).json({ error: 'Unexpected server error.' });
