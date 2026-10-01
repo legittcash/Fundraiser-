@@ -471,8 +471,8 @@ patient-fundraiser/
 │                                    # Also lists the "resend" package (Vercel runs `npm install` automatically).
 ├── index.html                      # Public homepage: KODEP header/logo, hero section, campaign
 │                                    # cards (5:6 photo, no border), "+ Add a Patient" button,
-│                                    # How It Works (4 steps), top right menu icon, vertical
-│                                    # footer links list, contact info, and a copyright line
+│                                    # How It Works (4 steps), top right menu icon, and one
+│                                    # merged footer (links, contact info, copyright line)
 │                                    # (the FAQ now lives on faqs.html, not here)
 ├── campaign.html                   # Public campaign details page — donate button calls
 │                                    # /api/initialize-donation and redirects to Paystack's
@@ -492,9 +492,9 @@ patient-fundraiser/
 ├── faqs.html                       # Public: FAQs accordion (20 questions), the only place the
 │                                    # FAQ appears
 ├── privacy-policy.html             # Public: KODEP Privacy Policy (15 sections), with menu icon
-│                                    # and vertical footer links
+│                                    # and the merged footer
 ├── terms.html                      # Public: KODEP Terms of Service (23 sections), with menu icon
-│                                    # and vertical footer links
+│                                    # and the merged footer
 ├── admin/
 │   ├── login.html                    # Admin login form (not linked from any public page —
 │   │                                  # reached only by its direct URL)
@@ -691,7 +691,7 @@ The public site carries KODEP's own identity rather than a generic
   `terms.html`.
 - **Top right menu** — an icon only hamburger button (no "Menu" text)
   at the top right of the header on every public page except the
-  campaign, submission and tracking pages. It opens a panel listing
+  campaign, submission and tracking pages. It opens a compact panel, sized to its longest link, listing
   About Us, Contact Us, Our Mission, Our Vision, and FAQs, in that
   order. The panel closes when a link is chosen, when the visitor
   taps outside it, or on Escape. Admin Login is deliberately not in
@@ -733,10 +733,16 @@ The public site carries KODEP's own identity rather than a generic
   open/closed state never relies on colour alone. Its JavaScript is a
   self-contained IIFE at the bottom of `faqs.html`. The homepage reaches
   it through the top right menu and the footer links.
-- **Footer links** — just before the footer, a simple vertical,
-  left aligned list (About Us, Contact Us, Our Mission, Our Vision,
-  FAQs, Privacy Policy, Terms of Service), one link per line with no
-  separators. The same list appears on all eight public pages.
+- **Footer links** — merged into the footer itself and centred.
+  Three columns of two links each (About Us and Contact Us; Our Mission
+  and Our Vision; Privacy Policy and Terms of Service), with no
+  separators, in the footer's own font, size and muted colour. FAQs
+  sits on its own centred line beneath the columns, followed by the
+  contact block and copyright line. The same footer appears on all
+  eight public pages.
+- **Menu icon size** — a 36px icon button, vertically centred on the
+  KODEP logotype line (with a slightly larger invisible tap area).
+- **How It Works circles** — the numbered pink circles are 30px.
 - **Footer** — KODEP's contact
   block (org name, location, `ojinwayoo@gmail.com`, `08062842257`), and
   a "© `<current year>` KODEP. All rights reserved." line. The year is
@@ -836,7 +842,7 @@ only.
   `ojinwayoo@gmail.com`, `08062842257`, Umuafia Village, Near Market
   Square, Orba, Nsukka, Enugu State, Nigeria. (Not `support@kodep.org`
   — that's reserved for a future custom domain.) Both pages now also
-  carry the top right menu icon and the vertical footer links list;
+  carry the top right menu icon and the merged footer (with all links);
   the in-card "See also" link line was removed because the vertical
   list replaces it. The legal text itself was not changed.
 - **Consent checkboxes** — `submit-campaign.html` requires two checked
@@ -1504,7 +1510,7 @@ custom domain.
    `terms.html` directly. Confirm the KODEP header renders, all 15 /
    23 sections are present, the contact block shows
    `ojinwayoo@gmail.com` / `08062842257` / the Umuafia Village address,
-   and each page links to the other through the vertical footer list,
+   and each page links to the other through the footer links,
    and back to the homepage through the logo and the back link.
 2. **Consent checkboxes block submission** — open
    `submit-campaign.html`, fill in every other required field, but
@@ -1522,7 +1528,7 @@ custom domain.
 5. **Admin Login is gone from the public homepage** — open
    `index.html` on a phone and desktop width. Confirm there is no
    "Admin Login" link anywhere, and that the footer instead shows
-   the vertical footer links (including Privacy Policy and Terms of
+   the merged footer links (including Privacy Policy and Terms of
    Service).
 6. **Admin Login itself still works** — go directly to
    `admin/login.html`. Confirm the page loads, is styled consistently
@@ -1532,8 +1538,9 @@ custom domain.
    top right icon (no "Menu" text), confirm the five links appear in
    order, open each page, and confirm the menu closes when a link is
    chosen. Confirm FAQs appear only on `faqs.html`, never on
-   `index.html`, and that the footer links are vertical and left
-   aligned.
+   `index.html`, and that the footer is centred, with the links in
+   three columns of two, FAQs on its own line beneath, then the
+   contact block and copyright.
 8. **Mobile check** — at a narrow phone width, confirm the KODEP
    header, hero section, footer links, and consent-checkbox text all
    wrap normally with no horizontal scrolling anywhere on `index.html`,
