@@ -36,6 +36,7 @@
 
 import { rejectIfNotAdmin } from '../../lib/admin-auth.js';
 import { listNigerianBanks, resolveAccountNumber, createSubaccount } from '../../lib/paystack.js';
+import { fetchAllRows } from '../../lib/supabase-paging.js';
 
 const PLATFORM_FEE_RATE_PERCENT = 1;
 const PLATFORM_FEE_CAP_NAIRA = 1000;
@@ -340,15 +341,18 @@ async function handleBeneficiaryCrud(req, res, { SUPABASE_URL, SUPABASE_SERVICE_
   try {
     if (req.method === 'GET') {
       if (req.query.all) {
-        const response = await fetch(
+        // Paged so every beneficiary is included beyond Supabase's
+        // default 1000 row response limit.
+        const allResult = await fetchAllRows(
           `${SUPABASE_URL}/rest/v1/beneficiaries?select=fundraiser_id,beneficiary_name,bank_name,account_number,verification_status,settlement_enabled`,
-          { headers }
+          headers,
+          'id.asc'
         );
-        if (!response.ok) {
-          console.error('Supabase error:', await response.text());
+        if (!allResult.ok) {
+          console.error('Supabase error:', allResult.errorText);
           return res.status(500).json({ error: 'Failed to load beneficiary summaries.' });
         }
-        const rows = await response.json();
+        const rows = allResult.rows;
         const summaries = rows.map((r) => ({
           fundraiser_id: r.fundraiser_id,
           beneficiary_name: r.beneficiary_name,

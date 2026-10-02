@@ -56,6 +56,8 @@ import campaignImages from '../../lib/campaign-images.js';
 // that file for why.
 const { uploadCampaignImage, deleteCampaignImage } = campaignImages;
 import { insertBeneficiary } from '../../lib/beneficiary.js';
+import { getSettledTotalsByCampaign } from '../../lib/amount-settled.js';
+import { fetchAllRows } from '../../lib/supabase-paging.js';
 import { sendCampaignApprovedEmail, sendCampaignRejectedEmail } from '../../lib/email.js';
 
 function getSupabaseConfig() {
@@ -137,35 +139,41 @@ async function handleAnalytics(req, res, { SUPABASE_URL, SUPABASE_SERVICE_ROLE_K
   };
 
   try {
-    const campaignsRes = await fetch(
+    // Read in pages (see lib/supabase-paging.js) so the totals stay
+    // correct beyond Supabase's default 1000 row response limit.
+    const campaignsResult = await fetchAllRows(
       `${SUPABASE_URL}/rest/v1/fundraiser?select=id,raised_amount,donor_count,status`,
-      { headers }
+      headers,
+      'id.asc'
     );
-    if (!campaignsRes.ok) {
-      console.error('Supabase error:', await campaignsRes.text());
+    if (!campaignsResult.ok) {
+      console.error('Supabase error:', campaignsResult.errorText);
       return res.status(500).json({ error: 'Failed to load campaign totals.' });
     }
-    const campaigns = await campaignsRes.json();
+    const campaigns = campaignsResult.rows;
 
     const totalPatients = campaigns.length;
     const activeCampaigns = campaigns.filter((c) => c.status === 'active').length;
     const totalRaised = campaigns.reduce((sum, c) => sum + Number(c.raised_amount || 0), 0);
     const totalDonors = campaigns.reduce((sum, c) => sum + Number(c.donor_count || 0), 0);
 
-    const financialsRes = await fetch(
+    // Paged for the same reason as above: without it these three totals
+    // would silently stop counting after the first 1000 donations.
+    const financialsResult = await fetchAllRows(
       `${SUPABASE_URL}/rest/v1/donations?select=amount,paystack_fee,platform_fee`,
-      { headers }
+      headers,
+      'id.asc'
     );
     let totalGrossDonations = 0;
     let totalPaystackFees = 0;
     let totalPlatformFees = 0;
-    if (financialsRes.ok) {
-      const allDonations = await financialsRes.json();
+    if (financialsResult.ok) {
+      const allDonations = financialsResult.rows;
       totalGrossDonations = allDonations.reduce((sum, d) => sum + Number(d.amount || 0), 0);
       totalPaystackFees = allDonations.reduce((sum, d) => sum + Number(d.paystack_fee || 0), 0);
       totalPlatformFees = allDonations.reduce((sum, d) => sum + Number(d.platform_fee || 0), 0);
     } else {
-      console.error('Supabase error fetching donation financials:', await financialsRes.text());
+      console.error('Supabase error fetching donation financials:', financialsResult.errorText);
     }
 
     // The nested `fundraiser:fundraiser_id(patient_name)` embed relies on
@@ -240,6 +248,11 @@ async function handleAnalytics(req, res, { SUPABASE_URL, SUPABASE_SERVICE_ROLE_K
       }
     }
 
+    // Total Amount Settled across all campaigns (SUM of
+    // donations.settled_amount). Read separately so the existing totals
+    // above are unaffected; null if it could not be read.
+    const settledTotals = await getSettledTotalsByCampaign(SUPABASE_URL, headers);
+
     return res.status(200).json({
       total_patients: totalPatients,
       active_campaigns: activeCampaigns,
@@ -248,6 +261,7 @@ async function handleAnalytics(req, res, { SUPABASE_URL, SUPABASE_SERVICE_ROLE_K
       total_gross_donations: totalGrossDonations,
       total_paystack_fees: totalPaystackFees,
       total_platform_fees: totalPlatformFees,
+      total_amount_settled: settledTotals ? settledTotals.total : null,
       recent_donations: recentDonations,
     });
   } catch (err) {
@@ -312,19 +326,31 @@ export default async function handler(req, res) {
     // ---------------------------------------------------------------
     if (req.method === 'GET') {
       const search = (req.query.search || '').trim();
-      let url = `${SUPABASE_URL}/rest/v1/fundraiser?select=*&order=created_at.desc`;
+      // order=created_at.desc,id.desc keeps the exact same visible order;
+      // the id tie-break just makes paging deterministic when two
+      // campaigns share a timestamp.
+      let url = `${SUPABASE_URL}/rest/v1/fundraiser?select=*&order=created_at.desc,id.desc`;
       if (search) {
         // ilike = case-insensitive "contains" match on patient_name
         url += `&patient_name=ilike.*${encodeURIComponent(search)}*`;
       }
 
-      const response = await fetch(url, { headers });
-      if (!response.ok) {
-        console.error('Supabase error:', await response.text());
+      const campaignsResult = await fetchAllRows(url, headers);
+      if (!campaignsResult.ok) {
+        console.error('Supabase error:', campaignsResult.errorText);
         return res.status(500).json({ error: 'Failed to fetch campaigns.' });
       }
-      const campaigns = await response.json();
-      return res.status(200).json({ campaigns });
+      const campaigns = campaignsResult.rows;
+
+      // Per campaign Amount Settled for the admin table (SUM of
+      // donations.settled_amount). null on every row if it could not be
+      // read, so the rest of the list is never affected.
+      const settledTotals = await getSettledTotalsByCampaign(SUPABASE_URL, headers);
+      const campaignsWithSettled = campaigns.map((c) => ({
+        ...c,
+        amount_settled: settledTotals ? settledTotals.byCampaign[c.id] || 0 : null,
+      }));
+      return res.status(200).json({ campaigns: campaignsWithSettled });
     }
 
     // ---------------------------------------------------------------
