@@ -518,6 +518,7 @@ patient-fundraiser/
 │                                    # removed — see "No-photo placeholder" below
 ├── lib/
 │   ├── admin-auth.js                  # Shared login-session helper used by admin APIs
+│   ├── supabase-paging.js             # Shared helper: reads a whole table in pages of 1000 (admin totals/lists)
 │   ├── amount-settled.js              # Shared helper: SUM(donations.settled_amount) for one campaign
 │   │                                  # (used by api/campaign.js and api/progress.js)
 │   ├── campaign-images.js             # Shared helper: upload/delete campaign photos in Storage
@@ -863,7 +864,7 @@ migration.
 
 ## Amount Settled statistic
 
-The public campaign page shows "Amount Settled: ₦X" directly below
+The public campaign page shows "Amount Settled to Beneficiary: ₦X" directly below
 Goal, in the identical `.goal-text` style. It is the total Paystack has
 routed to that campaign's beneficiary subaccount, and ₦0 if none.
 
@@ -884,6 +885,13 @@ routed to that campaign's beneficiary subaccount, and ₦0 if none.
   (the latter keeps the number live after a donation). Only this one
   number is exposed. If the lookup fails (for example the migration has
   not been run yet) it returns null and the page simply hides the line.
+- **Admin dashboard.** The Overview has a "Total amount settled" card
+  and the campaigns table has an "Amount Settled" column. Both come
+  from `getSettledTotalsByCampaign` in `lib/amount-settled.js` (only
+  rows where `settled_amount > 0`), returned by the admin only
+  `api/admin/campaigns.js` as `total_amount_settled` (analytics route)
+  and `amount_settled` on each campaign (list route). If the lookup
+  fails they show a dash and nothing else on the dashboard is affected.
 - **History.** Donations made before this feature keep
   `settled_amount = 0`; the database holds no reliable settlement
   figure for them, so none was invented.
@@ -891,6 +899,20 @@ routed to that campaign's beneficiary subaccount, and ₦0 if none.
   beneficiary's subaccount for each payment. Paystack pays that out to
   the bank on its own settlement schedule. It is independent of the
   Verified badge, which depends only on `verification_status`.
+
+## Supabase 1000 row response limit
+
+Supabase's REST API returns at most 1000 rows per request without
+saying so. The admin dashboard's totals and lists therefore read
+through `fetchAllRows` in `lib/supabase-paging.js`, which fetches pages
+of 1000 (in a stable order) until a short page arrives, so the numbers
+stay correct beyond 1000 donations, campaigns or beneficiaries. It is
+used for: the Overview totals (patients, active campaigns, raised,
+donors, gross, Paystack fees, platform fees), the admin campaign list,
+and the admin beneficiary summaries. The calculations themselves are
+unchanged, and for tables under 1000 rows it is exactly one request,
+as before. The public homepage list is deliberately not paged: it is a
+display list, not a total.
 
 ## Informational pages
 

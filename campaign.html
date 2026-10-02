@@ -484,7 +484,7 @@
             <span class="percentage" id="percentage">0%</span>
           </div>
           <div class="goal-text" id="goalText">Goal: ₦0</div>
-          <div class="goal-text" id="amountSettledText" ${Number.isFinite(Number(campaign.amount_settled)) && campaign.amount_settled !== null ? '' : 'hidden'}>Amount Settled: ₦${(Number(campaign.amount_settled) || 0).toLocaleString()}</div>
+          <div class="goal-text" id="amountSettledText" ${Number.isFinite(Number(campaign.amount_settled)) && campaign.amount_settled !== null ? '' : 'hidden'}>Amount Settled to Beneficiary: ₦${(Number(campaign.amount_settled) || 0).toLocaleString()}</div>
 
           <div class="progress-track">
             <div class="progress-fill" id="progressFill"></div>
@@ -648,7 +648,7 @@
       // Left unchanged if the figure could not be determined.
       const settledEl = document.getElementById('amountSettledText');
       if (settledEl && data.amount_settled !== null && data.amount_settled !== undefined && Number.isFinite(Number(data.amount_settled))) {
-        settledEl.textContent = `Amount Settled: ₦${Number(data.amount_settled).toLocaleString()}`;
+        settledEl.textContent = `Amount Settled to Beneficiary: ₦${Number(data.amount_settled).toLocaleString()}`;
         settledEl.hidden = false;
       }
 
