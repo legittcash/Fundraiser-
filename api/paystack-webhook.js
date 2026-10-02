@@ -32,12 +32,17 @@
 //      A donation with a missing or unrecognized fundraiser_id is
 //      rejected and logged, never credited to any campaign — there is
 //      no "default" campaign on a multi-campaign platform.
-//   6. If the reference is new, we insert a row into "donations" (which
-//      has a UNIQUE constraint on paystack_reference as a second line of
-//      defense) — including gross amount, Paystack's fee, our platform
-//      fee, and the resulting net amount — and only then update that ONE
-//      campaign's row in Supabase: add the NET amount (never the gross)
-//      to raised_amount, add 1 to donor_count.
+//   6. If the reference is new, we call ONE Postgres function
+//      (record_donation_and_update_totals — see supabase.sql) that
+//      atomically, in a single transaction: inserts the donation row
+//      (gross amount, Paystack's fee, our platform fee, net amount,
+//      donor details) AND credits that ONE campaign's raised_amount
+//      (by the NET amount, never the gross) and donor_count. Either
+//      both happen together, or — if anything fails — neither does;
+//      there is no way to end up with a donation recorded but its
+//      campaign never credited, or vice versa. Duplicate detection is
+//      built into that same atomic call via the UNIQUE constraint on
+//      paystack_reference.
 //   7. The next time the frontend calls /api/progress for that campaign,
 //      it will see the new, updated numbers.
 //
@@ -195,12 +200,62 @@ export default async function handler(req, res) {
   // separate "settle this donation" call that could be duplicated.
   const settledToSubaccount = event.data.metadata?.subaccount_code || null;
 
+  // ACTUAL amount Paystack sent to the beneficiary's subaccount for THIS
+  // transaction, taken from Paystack's own charge.success payload:
+  // event.data.fees_split.subaccount, in kobo (Paystack's transaction
+  // object documents fees_split as { paystack, integration, subaccount,
+  // params }, where "subaccount" is the subaccount's share after
+  // Paystack's fee and our transaction_charge were applied). Nothing is
+  // estimated or recomputed here, and the existing settlement behaviour
+  // is untouched: Paystack already performed the split inside this same
+  // transaction.
+  //
+  // It is 0 whenever no subaccount was used for this donation (our own
+  // checkout metadata carries no subaccount_code), or whenever the
+  // payload does not contain a usable numeric figure; in that last case
+  // we log a warning rather than invent a number. The value is clamped
+  // to [0, gross amount] so a malformed payload can never record more
+  // than the donor paid.
+  let settledAmount = 0;
+  if (settledToSubaccount) {
+    const shareRaw = event.data.fees_split && typeof event.data.fees_split === 'object' ? event.data.fees_split.subaccount : null;
+    const shareKobo = typeof shareRaw === 'string' && shareRaw.trim() !== '' ? Number(shareRaw) : shareRaw;
+    if (typeof shareKobo === 'number' && Number.isFinite(shareKobo) && shareKobo > 0) {
+      settledAmount = Math.min(shareKobo / 100, amountPaid);
+    } else {
+      console.warn(
+        `Donation ${event.data.reference} used subaccount ${settledToSubaccount} but the payload had no ` +
+          `usable fees_split.subaccount figure; recording settled_amount as 0 rather than guessing.`
+      );
+    }
+  }
+
   // The platform fee actually applied to this specific transaction, as
   // decided by /api/initialize-donation at the moment checkout began
-  // (see the file header for why this is trusted here). Falls back to 0
-  // if missing, exactly like the Paystack fee fallback above.
+  // (see the file header for why this is trusted here). Metadata values
+  // can arrive as either a JSON number or a numeric string (Paystack's
+  // metadata echo doesn't strictly preserve JS types in every case), so
+  // this accepts both — but never trusts an invalid, non-finite, or
+  // negative value: malformed metadata must never be able to produce an
+  // unexpected or negative platform fee. Falls back to 0 in every one
+  // of those cases, exactly like the Paystack fee fallback above.
+  //
+  // DEFENSIVE CAP: /api/initialize-donation already caps this at ₦1,000
+  // (100,000 kobo) when it computes the fee. This webhook independently
+  // re-enforces that same ₦1,000 cap on whatever value arrives in
+  // metadata, as a second line of defense — so even a corrupted,
+  // tampered, or buggy metadata payload can never credit more than
+  // ₦1,000 as a platform fee for a single transaction. This does not
+  // change how the fee is calculated; it only clamps an already-decided
+  // value.
+  const PLATFORM_FEE_CAP_KOBO = 100000; // ₦1,000
   const platformFeeRaw = event.data.metadata?.platform_fee_kobo;
-  const platformFee = typeof platformFeeRaw === 'number' ? platformFeeRaw / 100 : 0;
+  const platformFeeKoboParsed = typeof platformFeeRaw === 'string' ? Number(platformFeeRaw) : platformFeeRaw;
+  const platformFeeKobo =
+    typeof platformFeeKoboParsed === 'number' && Number.isFinite(platformFeeKoboParsed) && platformFeeKoboParsed >= 0
+      ? Math.min(Math.round(platformFeeKoboParsed), PLATFORM_FEE_CAP_KOBO)
+      : 0;
+  const platformFee = platformFeeKobo / 100;
 
   const netAmount = netAmountBeforePlatformFee - platformFee;
 
@@ -210,45 +265,12 @@ export default async function handler(req, res) {
   }
 
   try {
-    // ---- STEP 3: Check whether we've already processed this reference ----
-    // We look this reference up in "donations" BEFORE touching the
-    // fundraiser totals. If it's already there, this webhook call is a
-    // duplicate (Paystack retry) of one we've already handled, so we
-    // acknowledge it with 200 OK but do NOT add to the totals again.
-    const existingRes = await fetch(
-      `${SUPABASE_URL}/rest/v1/donations?select=id&paystack_reference=eq.${encodeURIComponent(reference)}&limit=1`,
-      {
-        headers: {
-          apikey: SUPABASE_SERVICE_ROLE_KEY,
-          Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-        },
-      }
-    );
-
-    if (!existingRes.ok) {
-      const errText = await existingRes.text();
-      console.error('Failed to check for existing donation:', errText);
-      return res.status(500).json({ error: 'Failed to check donation history.' });
-    }
-
-    const existingRows = await existingRes.json();
-    if (existingRows && existingRows.length > 0) {
-      // We've already recorded this exact payment — do nothing, but
-      // still return 200 so Paystack knows not to keep retrying.
-      console.log(`Duplicate webhook for reference ${reference}, skipping.`);
-      return res.status(200).json({ received: true, duplicate: true });
-    }
-
-    // ---- STEP 4: Fetch the correct campaign's row from Supabase ----
+    // ---- STEP 3: Fetch the correct campaign's row from Supabase ----
     // This is a multi-campaign platform, so every donation MUST be
     // attributable to exactly one specific campaign. There is no
     // "default" campaign to fall back to — a webhook with a missing or
     // invalid fundraiser_id is rejected and logged rather than silently
     // credited to whichever campaign happens to be first in the table.
-    // (An earlier version of this file fell back to the first campaign,
-    // which made sense only when this was a single-campaign site; now
-    // that many independent campaigns exist, that fallback would risk
-    // crediting the wrong patient entirely, so it's been removed.)
     if (!fundraiserId) {
       console.error(
         `Webhook for reference ${reference} is missing metadata.fundraiser_id — rejecting without crediting any campaign.`
@@ -257,7 +279,7 @@ export default async function handler(req, res) {
     }
 
     const getRes = await fetch(
-      `${SUPABASE_URL}/rest/v1/fundraiser?select=id,raised_amount,donor_count&id=eq.${encodeURIComponent(fundraiserId)}&limit=1`,
+      `${SUPABASE_URL}/rest/v1/fundraiser?select=id&id=eq.${encodeURIComponent(fundraiserId)}&limit=1`,
       {
         headers: {
           apikey: SUPABASE_SERVICE_ROLE_KEY,
@@ -282,82 +304,70 @@ export default async function handler(req, res) {
     }
 
     const current = rows[0];
-    // IMPORTANT: the campaign's raised_amount increases by the NET
-    // amount (after Paystack's fee), never the gross amount the donor
-    // paid — that's the whole point of this accounting change.
-    const newRaisedAmount = Number(current.raised_amount) + netAmount;
-    const newDonorCount = Number(current.donor_count) + 1;
 
-    // ---- STEP 5: Insert this donation into "donations" ----
-    // The table's UNIQUE constraint on paystack_reference is our second,
-    // database-level line of defense: even if two webhook deliveries
-    // somehow raced past the check in STEP 3 at the same time, only one
-    // of these inserts can succeed — the other will fail with a unique
-    // violation, which we catch below and treat as a duplicate.
-    const insertRes = await fetch(`${SUPABASE_URL}/rest/v1/donations`, {
+    // ---- STEP 4: Record the donation AND credit the campaign, ATOMICALLY, IN ONE CALL ----
+    // This used to be three separate steps: (1) check for an existing
+    // donation with this reference, (2) insert the donation, (3) call a
+    // separate RPC to increment raised_amount/donor_count. That closed
+    // the concurrent-donation race, but left a different gap: if the
+    // insert succeeded and the totals-update call then failed for any
+    // reason, the donation would be permanently recorded while the
+    // campaign was never credited for it — and Paystack's retry of the
+    // same webhook would then be treated as a duplicate and silently
+    // skipped, so the campaign would NEVER receive that money's credit.
+    //
+    // record_donation_and_update_totals (see supabase.sql) does both the
+    // insert AND the credit inside ONE PostgreSQL function call, which
+    // PostgREST runs as a single transaction — if anything inside it
+    // fails, the ENTIRE thing (donation insert included) rolls back
+    // automatically. There is no way to end up with a recorded donation
+    // whose campaign total was never updated.
+    //
+    // Duplicate detection is now "insert ... on conflict (paystack_reference)
+    // do nothing" inside that same function — the UNIQUE constraint makes
+    // it part of the same atomic statement, closing even the small race
+    // window that existed before between a separate "does it exist?"
+    // check and the insert that followed it.
+    const rpcRes = await fetch(`${SUPABASE_URL}/rest/v1/rpc/record_donation_and_update_totals`, {
       method: 'POST',
       headers: {
         apikey: SUPABASE_SERVICE_ROLE_KEY,
         Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
         'Content-Type': 'application/json',
-        Prefer: 'return=minimal',
       },
       body: JSON.stringify({
-        paystack_reference: reference,
-        amount: amountPaid, // gross amount the donor paid
-        paystack_fee: paystackFee,
-        platform_fee: platformFee,
-        net_amount: netAmount,
-        donor_name: donorName,
-        donor_email: donorEmail,
-        anonymous: isAnonymous,
-        fundraiser_id: current.id,
-        settled_to_subaccount: settledToSubaccount,
+        p_fundraiser_id: current.id,
+        p_paystack_reference: reference,
+        p_amount: amountPaid, // gross amount the donor paid
+        p_paystack_fee: paystackFee,
+        p_platform_fee: platformFee,
+        p_net_amount: netAmount,
+        p_donor_name: donorName,
+        p_donor_email: donorEmail,
+        p_anonymous: isAnonymous,
+        p_settled_to_subaccount: settledToSubaccount,
+        p_settled_amount: settledAmount,
       }),
     });
 
-    if (!insertRes.ok) {
-      const errText = await insertRes.text();
-
-      // Postgres unique-violation error code is 23505. If that's what
-      // happened here, another (near-simultaneous) webhook delivery for
-      // the same reference already won the race and recorded the
-      // donation — so we treat this as a duplicate rather than an error.
-      if (errText.includes('23505') || errText.toLowerCase().includes('duplicate')) {
-        console.log(`Duplicate donation insert for reference ${reference}, skipping totals update.`);
-        return res.status(200).json({ received: true, duplicate: true });
-      }
-
-      console.error('Failed to insert donation record:', errText);
+    if (!rpcRes.ok) {
+      const errText = await rpcRes.text();
+      console.error('Failed to atomically record donation and update fundraiser totals:', errText);
       return res.status(500).json({ error: 'Failed to record donation.' });
     }
 
-    // ---- STEP 6: Update the fundraiser row with the new totals ----
-    const updateRes = await fetch(
-      `${SUPABASE_URL}/rest/v1/fundraiser?id=eq.${current.id}`,
-      {
-        method: 'PATCH',
-        headers: {
-          apikey: SUPABASE_SERVICE_ROLE_KEY,
-          Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-          'Content-Type': 'application/json',
-          Prefer: 'return=minimal',
-        },
-        body: JSON.stringify({
-          raised_amount: newRaisedAmount,
-          donor_count: newDonorCount,
-          updated_at: new Date().toISOString(),
-        }),
-      }
-    );
+    const rpcRows = await rpcRes.json();
+    const result = rpcRows[0];
 
-    if (!updateRes.ok) {
-      const errText = await updateRes.text();
-      console.error('Failed to update Supabase:', errText);
-      return res.status(500).json({ error: 'Failed to update fundraiser totals.' });
+    if (result?.is_duplicate) {
+      // A donation with this exact Paystack reference already existed —
+      // acknowledge with 200 OK (so Paystack stops retrying) but confirm
+      // nothing was credited a second time.
+      console.log(`Duplicate webhook for reference ${reference}, skipping — totals unchanged.`);
+      return res.status(200).json({ received: true, duplicate: true });
     }
 
-    // ---- STEP 7: Tell Paystack we successfully handled the event ----
+    // ---- STEP 5: Tell Paystack we successfully handled the event ----
     return res.status(200).json({ received: true, updated: true });
   } catch (err) {
     console.error('Unexpected error handling webhook:', err);

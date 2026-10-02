@@ -20,10 +20,12 @@
 // rejected with 404.
 //
 // A successful response's JSON shape is unchanged:
-//     { raised_amount: 500, goal_amount: 1000, donor_count: 3 }
+//     { raised_amount: 500, goal_amount: 1000, donor_count: 3, amount_settled: 0 }
 
 // We use plain "fetch" to talk to Supabase's REST API (PostgREST),
 // so we don't need to install any extra npm packages.
+import { getAmountSettled } from '../lib/amount-settled.js';
+
 export default async function handler(req, res) {
   // Only allow GET requests to this endpoint
   if (req.method !== 'GET') {
@@ -60,7 +62,7 @@ export default async function handler(req, res) {
     // Ask Supabase's auto-generated REST API for the one matching row
     // in the "public.fundraiser" table. We select just the columns we need.
     const response = await fetch(
-      `${SUPABASE_BASE_URL}/rest/v1/fundraiser?select=raised_amount,goal_amount,donor_count${filter}&limit=1`,
+      `${SUPABASE_BASE_URL}/rest/v1/fundraiser?select=id,raised_amount,goal_amount,donor_count${filter}&limit=1`,
       {
         method: 'GET',
         headers: {
@@ -84,8 +86,18 @@ export default async function handler(req, res) {
       return res.status(404).json({ error: 'Campaign not found.' });
     }
 
-    // Send the fundraiser stats back to the frontend as JSON
-    return res.status(200).json(rows[0]);
+    // Send the fundraiser stats back to the frontend as JSON, plus the
+    // single public aggregate "amount_settled" (SUM of
+    // donations.settled_amount for this campaign; see
+    // lib/amount-settled.js). The internal id is used only for that
+    // lookup and is not returned, so the original three fields are
+    // unchanged.
+    const { id: campaignRowId, ...stats } = rows[0];
+    const amountSettled = await getAmountSettled(SUPABASE_BASE_URL, {
+      apikey: SUPABASE_SERVICE_ROLE_KEY,
+      Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+    }, campaignRowId);
+    return res.status(200).json({ ...stats, amount_settled: amountSettled });
   } catch (err) {
     console.error('Unexpected error in /api/progress:', err);
     return res.status(500).json({ error: 'Unexpected server error.' });

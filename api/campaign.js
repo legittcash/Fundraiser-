@@ -50,6 +50,8 @@
 // authoritatively, by api/initialize-donation.js at checkout — these
 // fields only let the PREVIEW match that reality instead of guessing.
 
+import { getAmountSettled } from '../lib/amount-settled.js';
+
 export default async function handler(req, res) {
   if (req.method !== 'GET') {
     res.setHeader('Allow', ['GET']);
@@ -140,12 +142,18 @@ export default async function handler(req, res) {
       console.warn('Could not check beneficiary settlement status; defaulting the fee preview to not applicable.', err);
     }
 
+    // Public "Amount Settled": the SUM of donations.settled_amount for
+    // this campaign only (see lib/amount-settled.js). A single number;
+    // no beneficiary or per donation data. null if it could not be read.
+    const amountSettled = await getAmountSettled(SUPABASE_URL, headers, campaign.id);
+
     return res.status(200).json({
       campaign: {
         ...campaign,
         platform_fee_enabled: platformFeeEnabled,
         platform_fee_applicable: platformFeeApplicable,
         beneficiary_verified: beneficiaryVerified,
+        amount_settled: amountSettled,
       },
     });
   } catch (err) {
