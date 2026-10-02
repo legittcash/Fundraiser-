@@ -909,10 +909,25 @@ of 1000 (in a stable order) until a short page arrives, so the numbers
 stay correct beyond 1000 donations, campaigns or beneficiaries. It is
 used for: the Overview totals (patients, active campaigns, raised,
 donors, gross, Paystack fees, platform fees), the admin campaign list,
-and the admin beneficiary summaries. The calculations themselves are
-unchanged, and for tables under 1000 rows it is exactly one request,
-as before. The public homepage list is deliberately not paged: it is a
-display list, not a total.
+the admin beneficiary summaries, and the full public campaign list
+(`api/campaigns.js` without `?page`, same newest first order, search
+unchanged). The calculations themselves are unchanged, and for tables
+under 1000 rows it is exactly one request, as before.
+
+### Homepage "Load more"
+
+The homepage no longer downloads every campaign at once. `index.html`
+requests `/api/campaigns?page=1` (and `&search=...` when searching),
+which returns 24 campaigns plus `has_more`. A "Load more" button under
+the grid appears only when `has_more` is true and fetches the next
+page, appending the cards. Searching starts again from page 1.
+Campaigns already shown are never repeated (if a new campaign is added
+while someone is browsing), a slow response from an older search is
+ignored, and a failed load shows "Could not load. Tap to try again"
+without losing the cards already shown. `api/campaigns.js` still
+returns the whole list when called without `?page`, so any older caller
+keeps working. The page size is the `PAGE_SIZE` constant (24) at the top
+of `api/campaigns.js`.
 
 ## Informational pages
 

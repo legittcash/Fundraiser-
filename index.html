@@ -358,6 +358,24 @@
     margin: 0;
   }
 
+  /* "Load more" button under the campaign grid: same pink and pill shape
+     as the other buttons, outlined so it reads as secondary. */
+  .load-more-wrap { text-align: center; margin: 22px 0 6px; }
+  .load-more-wrap[hidden] { display: none; }
+  .load-more-btn {
+    background: #fff;
+    color: var(--pink-dark);
+    border: 2px solid var(--pink);
+    font-family: inherit;
+    font-weight: 700;
+    font-size: 0.88rem;
+    padding: 11px 30px;
+    border-radius: 999px;
+    cursor: pointer;
+  }
+  .load-more-btn:hover { background: #fdf0f6; }
+  .load-more-btn:disabled { opacity: 0.6; cursor: default; }
+
   .start-fundraiser-btn {
     display: block;
     text-align: center;
@@ -520,6 +538,11 @@
     <p class="status-msg">Loading campaigns...</p>
   </div>
 
+  <!-- "Load more": shown only when another page of campaigns exists -->
+  <div class="load-more-wrap" id="loadMoreWrap" hidden>
+    <button type="button" class="load-more-btn" id="loadMoreBtn">Load more</button>
+  </div>
+
   <!-- ============== HOW IT WORKS ============== -->
   <section class="how-it-works" aria-labelledby="howItWorksHeading">
     <h2 id="howItWorksHeading" class="section-heading">How It Works</h2>
@@ -572,7 +595,8 @@
     LOAD ALL ACTIVE CAMPAIGNS FROM THE BACKEND
     =========================================================
     This calls our own serverless function at /api/campaigns,
-    which reads every campaign marked "active" from Supabase
+    which reads the campaigns marked "active" from Supabase, one
+    page at a time (the "Load more" button fetches the next page),
     and returns them as JSON. We turn each one into a clickable
     card that links to campaign.html?slug=<their-slug>.
   */
@@ -588,21 +612,76 @@
     "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 240'%3E%3Crect width='200' height='240' fill='%23f0f0f3'/%3E%3Ccircle cx='75' cy='78' r='18' fill='%23d1d5db'/%3E%3Cpath d='M20 200 L80 130 L120 165 L150 118 L190 200 Z' fill='%23d1d5db'/%3E%3C/svg%3E";
   const searchInput = document.getElementById('searchInput');
 
+  const loadMoreWrap = document.getElementById('loadMoreWrap');
+  const loadMoreBtn = document.getElementById('loadMoreBtn');
+
   let searchDebounceTimer = null;
 
+  // Paging state for the "Load more" button. loadToken lets us ignore a
+  // slow response that belongs to an earlier search, and shownIds stops
+  // a campaign appearing twice if new ones are added while someone is
+  // browsing (which shifts the page boundaries).
+  let currentSearch = '';
+  let currentPage = 1;
+  let loadToken = 0;
+  let shownIds = new Set();
+
+  function pageUrl(search, page) {
+    let url = `/api/campaigns?page=${page}`;
+    if (search) url += `&search=${encodeURIComponent(search)}`;
+    return url;
+  }
+
   async function loadCampaigns(search = '') {
+    const token = ++loadToken;
+    currentSearch = search;
+    currentPage = 1;
+    shownIds = new Set();
+    loadMoreWrap.hidden = true;
+    loadMoreBtn.disabled = false;
+    loadMoreBtn.textContent = 'Load more';
     try {
-      const url = search
-        ? `/api/campaigns?search=${encodeURIComponent(search)}`
-        : '/api/campaigns';
-      const res = await fetch(url);
+      const res = await fetch(pageUrl(search, 1));
       const data = await res.json();
-      renderCampaigns(data.campaigns || []);
+      if (token !== loadToken) return; // a newer search replaced this one
+      const campaigns = data.campaigns || [];
+      campaigns.forEach((c) => shownIds.add(c.id));
+      renderCampaigns(campaigns);
+      loadMoreWrap.hidden = !(data.has_more === true);
     } catch (err) {
+      if (token !== loadToken) return;
       console.error('Failed to load campaigns:', err);
       campaignGrid.innerHTML = '<p class="status-msg error">Could not load campaigns right now. Please try again shortly.</p>';
     }
   }
+
+  async function loadMoreCampaigns() {
+    const token = loadToken;
+    loadMoreBtn.disabled = true;
+    loadMoreBtn.textContent = 'Loading...';
+    try {
+      const res = await fetch(pageUrl(currentSearch, currentPage + 1));
+      const data = await res.json();
+      if (token !== loadToken) return; // search changed while loading
+      if (!res.ok) throw new Error(data.error || 'Request failed');
+      const fresh = (data.campaigns || []).filter((c) => !shownIds.has(c.id));
+      fresh.forEach((c) => shownIds.add(c.id));
+      campaignGrid.insertAdjacentHTML('beforeend', fresh.map(campaignCardHtml).join(''));
+      currentPage += 1;
+      loadMoreWrap.hidden = !(data.has_more === true);
+    } catch (err) {
+      if (token !== loadToken) return;
+      console.error('Failed to load more campaigns:', err);
+      loadMoreBtn.textContent = 'Could not load. Tap to try again';
+    } finally {
+      if (token === loadToken) {
+        loadMoreBtn.disabled = false;
+        if (loadMoreBtn.textContent === 'Loading...') loadMoreBtn.textContent = 'Load more';
+      }
+    }
+  }
+
+  loadMoreBtn.addEventListener('click', loadMoreCampaigns);
 
   function renderCampaigns(campaigns) {
     if (campaigns.length === 0) {
