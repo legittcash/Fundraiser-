@@ -3,12 +3,29 @@
 // Public endpoint used by the new homepage (index.html) to show every
 // active patient campaign, with an optional search box.
 //
-//   GET /api/campaigns              -> all active campaigns
-//   GET /api/campaigns?search=patient  -> active campaigns matching "patient"
+//   GET /api/campaigns                     -> all active campaigns
+//   GET /api/campaigns?search=patient      -> active campaigns matching "patient"
+//   GET /api/campaigns?page=1              -> first 24 active campaigns, plus has_more
+//   GET /api/campaigns?page=2&search=ada   -> next 24 matching, plus has_more
+//
+// With ?page=N the homepage "Load more" button gets one page at a time
+// ({ campaigns, has_more }). Without ?page the whole list is returned,
+// exactly as before, so nothing that already calls this endpoint breaks.
 //
 // This never exposes archived campaigns, and only returns the fields the
 // homepage cards actually need. Each campaign also carries a single
 // yes/no field, beneficiary_verified, for the public "Verified" badge.
+//
+// The full list (no ?page) is read in pages of 1000
+// (lib/supabase-paging.js) so every active campaign is returned even
+// beyond Supabase's default 1000 row response limit. Search and
+// ordering behave exactly as before.
+
+import { fetchAllRows } from '../lib/supabase-paging.js';
+
+// How many campaigns each "Load more" page returns. 24 divides evenly into
+// the 2, 3 and 4 column homepage layouts, so rows are never left ragged.
+const PAGE_SIZE = 24;
 
 export default async function handler(req, res) {
   if (req.method !== 'GET') {
@@ -27,26 +44,45 @@ export default async function handler(req, res) {
   let url =
     `${SUPABASE_URL}/rest/v1/fundraiser` +
     `?select=id,slug,patient_name,hospital,image_url,goal_amount,raised_amount,donor_count` +
-    `&status=eq.active&order=created_at.desc`;
+    `&status=eq.active&order=created_at.desc,id.desc`; // id tie-break: same newest first order, stable paging
 
   if (search) {
     url += `&patient_name=ilike.*${encodeURIComponent(search)}*`;
   }
 
   try {
-    const response = await fetch(url, {
-      headers: {
-        apikey: SUPABASE_SERVICE_ROLE_KEY,
-        Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-      },
-    });
+    const supabaseHeaders = {
+      apikey: SUPABASE_SERVICE_ROLE_KEY,
+      Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+    };
 
-    if (!response.ok) {
-      console.error('Supabase error:', await response.text());
-      return res.status(500).json({ error: 'Failed to load campaigns.' });
+    let campaigns;
+    let hasMore = false;
+    const pageParam = req.query.page;
+
+    if (pageParam !== undefined) {
+      // "Load more" mode: fetch just one page. One extra row is requested
+      // so we know whether another page exists without a second query.
+      const page = Math.max(1, Math.floor(Number(pageParam)) || 1);
+      const response = await fetch(
+        `${url}&limit=${PAGE_SIZE + 1}&offset=${(page - 1) * PAGE_SIZE}`,
+        { headers: supabaseHeaders }
+      );
+      if (!response.ok) {
+        console.error('Supabase error:', await response.text());
+        return res.status(500).json({ error: 'Failed to load campaigns.' });
+      }
+      const rows = await response.json();
+      hasMore = rows.length > PAGE_SIZE;
+      campaigns = rows.slice(0, PAGE_SIZE);
+    } else {
+      const result = await fetchAllRows(url, supabaseHeaders);
+      if (!result.ok) {
+        console.error('Supabase error:', result.errorText);
+        return res.status(500).json({ error: 'Failed to load campaigns.' });
+      }
+      campaigns = result.rows;
     }
-
-    const campaigns = await response.json();
 
     // ---- Public "Verified" badge flag ----
     // Adds ONE boolean, beneficiary_verified, per campaign. It is true
@@ -82,6 +118,9 @@ export default async function handler(req, res) {
       ...c,
       beneficiary_verified: verifiedIds.has(c.id),
     }));
+    if (pageParam !== undefined) {
+      return res.status(200).json({ campaigns: campaignsWithBadge, has_more: hasMore });
+    }
     return res.status(200).json({ campaigns: campaignsWithBadge });
   } catch (err) {
     console.error('Unexpected error in /api/campaigns:', err);
