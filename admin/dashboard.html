@@ -400,6 +400,7 @@
     <div class="stat-card"><div class="stat-value">—</div><div class="stat-label">Total gross donations</div></div>
     <div class="stat-card"><div class="stat-value">—</div><div class="stat-label">Total Paystack fees</div></div>
     <div class="stat-card"><div class="stat-value">—</div><div class="stat-label">Total platform fees</div></div>
+    <div class="stat-card"><div class="stat-value">—</div><div class="stat-label">Total amount settled</div></div>
   </div>
 
   <!-- ============ PLATFORM FEE MASTER SWITCH ============ -->
@@ -444,6 +445,7 @@
           <th>Patient</th>
           <th>Goal</th>
           <th>Raised (net)</th>
+          <th>Amount Settled</th>
           <th>%</th>
           <th>Donors</th>
           <th>Status</th>
@@ -456,7 +458,7 @@
         </tr>
       </thead>
       <tbody id="campaignTableBody">
-        <tr><td colspan="12" class="status-msg">Loading campaigns...</td></tr>
+        <tr><td colspan="13" class="status-msg">Loading campaigns...</td></tr>
       </tbody>
     </table>
   </div>
@@ -727,6 +729,7 @@
       cards[4].textContent = `₦${Number(data.total_gross_donations || 0).toLocaleString()}`;
       cards[5].textContent = `₦${Number(data.total_paystack_fees || 0).toLocaleString()}`;
       cards[6].textContent = `₦${Number(data.total_platform_fees || 0).toLocaleString()}`;
+      cards[7].textContent = data.total_amount_settled == null ? '—' : `₦${Number(data.total_amount_settled).toLocaleString()}`;
 
       renderDonations(data.recent_donations || []);
     } catch (err) {
@@ -891,7 +894,7 @@
       if (!res.ok) {
         const message = await describeFailedResponse(res, 'Loading campaigns');
         showDashboardError(`Could not load campaigns: ${message}`);
-        campaignTableBody.innerHTML = `<tr><td colspan="12" class="status-msg">Could not load campaigns: ${escapeHtml(message)}</td></tr>`;
+        campaignTableBody.innerHTML = `<tr><td colspan="13" class="status-msg">Could not load campaigns: ${escapeHtml(message)}</td></tr>`;
         return;
       }
       const data = await res.json();
@@ -903,7 +906,7 @@
       console.error('Failed to load campaigns:', err);
       const message = err.message || 'Network error.';
       showDashboardError(`Could not load campaigns: ${message}`);
-      campaignTableBody.innerHTML = `<tr><td colspan="12" class="status-msg">Could not load campaigns: ${escapeHtml(message)}</td></tr>`;
+      campaignTableBody.innerHTML = `<tr><td colspan="13" class="status-msg">Could not load campaigns: ${escapeHtml(message)}</td></tr>`;
     }
   }
 
@@ -958,7 +961,7 @@
 
   function renderCampaignTable(campaigns) {
     if (campaigns.length === 0) {
-      campaignTableBody.innerHTML = '<tr><td colspan="12" class="status-msg">No campaigns in this tab yet.</td></tr>';
+      campaignTableBody.innerHTML = '<tr><td colspan="13" class="status-msg">No campaigns in this tab yet.</td></tr>';
       return;
     }
 
@@ -1017,6 +1020,7 @@
         </td>
         <td class="nowrap">₦${goal.toLocaleString()}</td>
         <td class="nowrap">₦${raised.toLocaleString()}</td>
+        <td class="nowrap">${c.amount_settled == null ? '<span class="muted-cell">—</span>' : `₦${Number(c.amount_settled).toLocaleString()}`}</td>
         <td class="nowrap">${percent}%${achievedTag}</td>
         <td>${c.donor_count}</td>
         <td><span class="badge ${c.status}">${c.status}</span></td>
