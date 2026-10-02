@@ -293,6 +293,13 @@ alter table beneficiaries enable row level security;
 -- api/paystack-webhook.js) — never a guessed or invented Paystack field.
 alter table donations add column if not exists settled_to_subaccount text;
 
+-- 13b. The ACTUAL naira amount Paystack settled (split) to the
+-- beneficiary's subaccount for each donation, recorded by the webhook
+-- from Paystack's own payload (fees_split.subaccount). 0 when no
+-- subaccount was used. Historical rows stay at 0: no reliable figure
+-- exists for them, so none is invented.
+alter table donations add column if not exists settled_amount numeric not null default 0;
+
 -- =========================================================================
 -- PLATFORM FEE (1%, capped at ₦1,000 per transaction) — MASTER SWITCH
 -- =========================================================================
@@ -434,6 +441,13 @@ grant execute on function increment_fundraiser_totals(bigint, numeric) to servic
 -- but is left defined here rather than dropped, since dropping it isn't
 -- necessary for correctness and this project avoids destructive changes
 -- unless specifically asked for.
+-- The function gained one parameter (p_settled_amount). Postgres treats a
+-- different parameter list as a different function, so the previous
+-- 10 argument version is dropped first; otherwise both would exist.
+drop function if exists record_donation_and_update_totals(
+  bigint, text, numeric, numeric, numeric, numeric, text, text, boolean, text
+);
+
 create or replace function record_donation_and_update_totals(
   p_fundraiser_id bigint,
   p_paystack_reference text,
@@ -444,7 +458,8 @@ create or replace function record_donation_and_update_totals(
   p_donor_name text,
   p_donor_email text,
   p_anonymous boolean,
-  p_settled_to_subaccount text
+  p_settled_to_subaccount text,
+  p_settled_amount numeric default 0
 )
 returns table (
   is_duplicate boolean,
@@ -470,11 +485,12 @@ begin
 
   insert into donations (
     paystack_reference, amount, paystack_fee, platform_fee, net_amount,
-    donor_name, donor_email, anonymous, fundraiser_id, settled_to_subaccount
+    donor_name, donor_email, anonymous, fundraiser_id, settled_to_subaccount, settled_amount
   )
   values (
     p_paystack_reference, p_amount, p_paystack_fee, p_platform_fee, p_net_amount,
-    p_donor_name, p_donor_email, p_anonymous, p_fundraiser_id, p_settled_to_subaccount
+    p_donor_name, p_donor_email, p_anonymous, p_fundraiser_id, p_settled_to_subaccount,
+    greatest(coalesce(p_settled_amount, 0), 0)
   )
   on conflict (paystack_reference) do nothing
   returning donations.id into v_donation_id;
@@ -509,16 +525,16 @@ $$;
 -- Same access pattern as increment_fundraiser_totals above: only our
 -- own trusted server (via the SERVICE ROLE key) may ever call this.
 revoke all on function record_donation_and_update_totals(
-  bigint, text, numeric, numeric, numeric, numeric, text, text, boolean, text
+  bigint, text, numeric, numeric, numeric, numeric, text, text, boolean, text, numeric
 ) from public;
 revoke all on function record_donation_and_update_totals(
-  bigint, text, numeric, numeric, numeric, numeric, text, text, boolean, text
+  bigint, text, numeric, numeric, numeric, numeric, text, text, boolean, text, numeric
 ) from anon;
 revoke all on function record_donation_and_update_totals(
-  bigint, text, numeric, numeric, numeric, numeric, text, text, boolean, text
+  bigint, text, numeric, numeric, numeric, numeric, text, text, boolean, text, numeric
 ) from authenticated;
 grant execute on function record_donation_and_update_totals(
-  bigint, text, numeric, numeric, numeric, numeric, text, text, boolean, text
+  bigint, text, numeric, numeric, numeric, numeric, text, text, boolean, text, numeric
 ) to service_role;
 
 -- =========================================================================

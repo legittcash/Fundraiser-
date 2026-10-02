@@ -152,6 +152,13 @@
     margin-bottom: 14px;
   }
 
+  /* Amount Settled uses the exact same .goal-text styling as Goal. The
+     negative top margin only pulls it up under the Goal line (the 14px
+     gap above collapses to 2px); the block keeps the original spacing
+     above the progress bar. Hidden entirely if the figure is unknown. */
+  #amountSettledText { margin-top: -12px; }
+  #amountSettledText[hidden] { display: none; }
+
   /* Progress bar track */
   .progress-track {
     background: #e5e7eb;
@@ -477,6 +484,7 @@
             <span class="percentage" id="percentage">0%</span>
           </div>
           <div class="goal-text" id="goalText">Goal: ₦0</div>
+          <div class="goal-text" id="amountSettledText" ${Number.isFinite(Number(campaign.amount_settled)) && campaign.amount_settled !== null ? '' : 'hidden'}>Amount Settled: ₦${(Number(campaign.amount_settled) || 0).toLocaleString()}</div>
 
           <div class="progress-track">
             <div class="progress-fill" id="progressFill"></div>
@@ -634,6 +642,14 @@
         badgeWrap.innerHTML = '';
         goalTextEl.textContent = `Goal: ₦${goal.toLocaleString()}`;
         percentEl.textContent = `${truePercent}%`;
+      }
+
+      // Public aggregate "Amount Settled" (same source as /api/campaign).
+      // Left unchanged if the figure could not be determined.
+      const settledEl = document.getElementById('amountSettledText');
+      if (settledEl && data.amount_settled !== null && data.amount_settled !== undefined && Number.isFinite(Number(data.amount_settled))) {
+        settledEl.textContent = `Amount Settled: ₦${Number(data.amount_settled).toLocaleString()}`;
+        settledEl.hidden = false;
       }
 
       // Animate the bar by setting its width — the CSS "transition" makes it slide smoothly

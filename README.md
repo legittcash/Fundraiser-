@@ -388,6 +388,15 @@ project needs, including `beneficiaries` and `platform_settings`, and is
 always safe to re-run — everything uses `if not exists` / safe
 backfills, and nothing here ever deletes or resets existing data.
 
+### 4b. Run `supabase-settled-amount.sql` (Amount Settled statistic)
+Supabase → **SQL Editor** → **New query** → paste the **entire**
+`supabase-settled-amount.sql` file → **Run**, **before** deploying the
+updated `api/paystack-webhook.js`. It adds `donations.settled_amount`
+and replaces `record_donation_and_update_totals` with a version that
+accepts one extra parameter, all inside one transaction. These same
+changes are also folded into `supabase.sql`, so run ONE of the two. No
+table is dropped or reset and no existing row is changed.
+
 ### 4a. Run `supabase-tracking.sql` (private submission tracking)
 Supabase → **SQL Editor** → **New query** → paste the **entire**
 `supabase-tracking.sql` file → **Run**. This is a separate, additive
@@ -509,6 +518,8 @@ patient-fundraiser/
 │                                    # removed — see "No-photo placeholder" below
 ├── lib/
 │   ├── admin-auth.js                  # Shared login-session helper used by admin APIs
+│   ├── amount-settled.js              # Shared helper: SUM(donations.settled_amount) for one campaign
+│   │                                  # (used by api/campaign.js and api/progress.js)
 │   ├── campaign-images.js             # Shared helper: upload/delete campaign photos in Storage
 │   │                                  # (single default export — see the file's own comments)
 │   │                                   # (used by both the admin upload route and the public
@@ -554,6 +565,8 @@ patient-fundraiser/
 │                                        # it's just Paystack's public bank list), ?route=verify,
 │                                        # ?route=settlement, and ?route=platform-fee (all admin-only)
 ├── supabase.sql                     # Full schema: tables, migrations, storage bucket — always safe to re-run
+├── supabase-settled-amount.sql      # Additive migration: donations.settled_amount + the updated
+│                                     # record_donation_and_update_totals function (run once)
 ├── supabase-tracking.sql            # Additive migration: submitter_name/email/phone, tracking_token,
 │                                     # rejection_reason columns + unique index — always safe to re-run
 └── README.md                        # This file
@@ -847,6 +860,37 @@ migration.
 - When an admin verifies a beneficiary through the existing admin
   workflow, the badge appears on the next page load; if the status is
   no longer `verified`, it disappears.
+
+## Amount Settled statistic
+
+The public campaign page shows "Amount Settled: ₦X" directly below
+Goal, in the identical `.goal-text` style. It is the total Paystack has
+routed to that campaign's beneficiary subaccount, and ₦0 if none.
+
+- **Recording (per donation).** `api/paystack-webhook.js` reads
+  `fees_split.subaccount` (kobo) from Paystack's own signed
+  `charge.success` payload, divides by 100, and passes it to
+  `record_donation_and_update_totals` as `p_settled_amount`, stored in
+  `donations.settled_amount`. Nothing is estimated or recomputed. It is
+  0 when no subaccount was used for the donation, when the payload has
+  no usable figure (a warning is logged), or if the figure is invalid;
+  it is clamped to between 0 and the gross amount. The existing
+  `paystack_fee`, `platform_fee`, `net_amount` and `raised_amount`
+  calculations are unchanged, and a duplicate webhook cannot record or
+  add a second amount because the insert is skipped on conflict.
+- **Public figure.** `lib/amount-settled.js` sums `settled_amount` for
+  one campaign (paged, summed in kobo) and is returned as
+  `amount_settled` by both `api/campaign.js` and `api/progress.js`
+  (the latter keeps the number live after a donation). Only this one
+  number is exposed. If the lookup fails (for example the migration has
+  not been run yet) it returns null and the page simply hides the line.
+- **History.** Donations made before this feature keep
+  `settled_amount = 0`; the database holds no reliable settlement
+  figure for them, so none was invented.
+- **Meaning.** "Settled" here is the share Paystack allocated to the
+  beneficiary's subaccount for each payment. Paystack pays that out to
+  the bank on its own settlement schedule. It is independent of the
+  Verified badge, which depends only on `verification_status`.
 
 ## Informational pages
 
