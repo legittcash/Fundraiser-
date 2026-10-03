@@ -341,10 +341,23 @@ async function handleBeneficiaryCrud(req, res, { SUPABASE_URL, SUPABASE_SERVICE_
   try {
     if (req.method === 'GET') {
       if (req.query.all) {
+        // Optional ?ids=1,2,3 limits the summaries to those campaigns (the
+        // admin dashboard only needs the ones currently on screen, which
+        // keeps this response small with very many campaigns). Without
+        // ids, every beneficiary is returned, as before.
+        let idFilter = '';
+        if (req.query.ids !== undefined) {
+          const rawIds = String(req.query.ids);
+          if (!/^\d+(,\d+)*$/.test(rawIds) || rawIds.split(',').length > 200) {
+            return res.status(400).json({ error: 'ids must be up to 200 comma separated campaign ids.' });
+          }
+          idFilter = `&fundraiser_id=in.(${rawIds})`;
+        }
+
         // Paged so every beneficiary is included beyond Supabase's
         // default 1000 row response limit.
         const allResult = await fetchAllRows(
-          `${SUPABASE_URL}/rest/v1/beneficiaries?select=fundraiser_id,beneficiary_name,bank_name,account_number,verification_status,settlement_enabled`,
+          `${SUPABASE_URL}/rest/v1/beneficiaries?select=fundraiser_id,beneficiary_name,bank_name,account_number,verification_status,settlement_enabled${idFilter}`,
           headers,
           'id.asc'
         );

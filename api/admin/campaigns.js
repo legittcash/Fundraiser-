@@ -56,8 +56,8 @@ import campaignImages from '../../lib/campaign-images.js';
 // that file for why.
 const { uploadCampaignImage, deleteCampaignImage } = campaignImages;
 import { insertBeneficiary } from '../../lib/beneficiary.js';
-import { getSettledTotalsByCampaign } from '../../lib/amount-settled.js';
-import { fetchAllRows } from '../../lib/supabase-paging.js';
+import { getSettledTotalsByCampaign, getSettledForCampaigns } from '../../lib/amount-settled.js';
+import { fetchAllRows, callRpc } from '../../lib/supabase-paging.js';
 import { sendCampaignApprovedEmail, sendCampaignRejectedEmail } from '../../lib/email.js';
 
 function getSupabaseConfig() {
@@ -139,41 +139,67 @@ async function handleAnalytics(req, res, { SUPABASE_URL, SUPABASE_SERVICE_ROLE_K
   };
 
   try {
-    // Read in pages (see lib/supabase-paging.js) so the totals stay
-    // correct beyond Supabase's default 1000 row response limit.
-    const campaignsResult = await fetchAllRows(
-      `${SUPABASE_URL}/rest/v1/fundraiser?select=id,raised_amount,donor_count,status`,
-      headers,
-      'id.asc'
-    );
-    if (!campaignsResult.ok) {
-      console.error('Supabase error:', campaignsResult.errorText);
-      return res.status(500).json({ error: 'Failed to load campaign totals.' });
-    }
-    const campaigns = campaignsResult.rows;
+    // FAST PATH: let the database add everything up in one query
+    // (admin_overview_totals, from supabase-scale-upgrade.sql). Same
+    // definitions as the code below, but it scales to hundreds of
+    // thousands of donations because no rows are sent to the server.
+    // If that function does not exist yet, the original row by row
+    // calculation below runs instead, exactly as before.
+    const fastTotals = await callRpc(SUPABASE_URL, headers, 'admin_overview_totals', {});
+    const fastRow = fastTotals.ok && Array.isArray(fastTotals.data) ? fastTotals.data[0] : null;
 
-    const totalPatients = campaigns.length;
-    const activeCampaigns = campaigns.filter((c) => c.status === 'active').length;
-    const totalRaised = campaigns.reduce((sum, c) => sum + Number(c.raised_amount || 0), 0);
-    const totalDonors = campaigns.reduce((sum, c) => sum + Number(c.donor_count || 0), 0);
-
-    // Paged for the same reason as above: without it these three totals
-    // would silently stop counting after the first 1000 donations.
-    const financialsResult = await fetchAllRows(
-      `${SUPABASE_URL}/rest/v1/donations?select=amount,paystack_fee,platform_fee`,
-      headers,
-      'id.asc'
-    );
+    let totalPatients = 0;
+    let activeCampaigns = 0;
+    let totalRaised = 0;
+    let totalDonors = 0;
     let totalGrossDonations = 0;
     let totalPaystackFees = 0;
     let totalPlatformFees = 0;
-    if (financialsResult.ok) {
-      const allDonations = financialsResult.rows;
-      totalGrossDonations = allDonations.reduce((sum, d) => sum + Number(d.amount || 0), 0);
-      totalPaystackFees = allDonations.reduce((sum, d) => sum + Number(d.paystack_fee || 0), 0);
-      totalPlatformFees = allDonations.reduce((sum, d) => sum + Number(d.platform_fee || 0), 0);
+    let totalAmountSettled = null;
+
+    if (fastRow) {
+      totalPatients = Number(fastRow.total_patients) || 0;
+      activeCampaigns = Number(fastRow.active_campaigns) || 0;
+      totalRaised = Number(fastRow.total_raised) || 0;
+      totalDonors = Number(fastRow.total_donors) || 0;
+      totalGrossDonations = Number(fastRow.total_gross_donations) || 0;
+      totalPaystackFees = Number(fastRow.total_paystack_fees) || 0;
+      totalPlatformFees = Number(fastRow.total_platform_fees) || 0;
+      totalAmountSettled = Number(fastRow.total_amount_settled) || 0;
     } else {
-      console.error('Supabase error fetching donation financials:', financialsResult.errorText);
+      // Read in pages (see lib/supabase-paging.js) so the totals stay
+      // correct beyond Supabase's default 1000 row response limit.
+      const campaignsResult = await fetchAllRows(
+        `${SUPABASE_URL}/rest/v1/fundraiser?select=id,raised_amount,donor_count,status`,
+        headers,
+        'id.asc'
+      );
+      if (!campaignsResult.ok) {
+        console.error('Supabase error:', campaignsResult.errorText);
+        return res.status(500).json({ error: 'Failed to load campaign totals.' });
+      }
+      const campaigns = campaignsResult.rows;
+
+      totalPatients = campaigns.length;
+      activeCampaigns = campaigns.filter((c) => c.status === 'active').length;
+      totalRaised = campaigns.reduce((sum, c) => sum + Number(c.raised_amount || 0), 0);
+      totalDonors = campaigns.reduce((sum, c) => sum + Number(c.donor_count || 0), 0);
+
+      // Paged for the same reason as above: without it these three totals
+      // would silently stop counting after the first 1000 donations.
+      const financialsResult = await fetchAllRows(
+        `${SUPABASE_URL}/rest/v1/donations?select=amount,paystack_fee,platform_fee`,
+        headers,
+        'id.asc'
+      );
+      if (financialsResult.ok) {
+        const allDonations = financialsResult.rows;
+        totalGrossDonations = allDonations.reduce((sum, d) => sum + Number(d.amount || 0), 0);
+        totalPaystackFees = allDonations.reduce((sum, d) => sum + Number(d.paystack_fee || 0), 0);
+        totalPlatformFees = allDonations.reduce((sum, d) => sum + Number(d.platform_fee || 0), 0);
+      } else {
+        console.error('Supabase error fetching donation financials:', financialsResult.errorText);
+      }
     }
 
     // The nested `fundraiser:fundraiser_id(patient_name)` embed relies on
@@ -251,7 +277,7 @@ async function handleAnalytics(req, res, { SUPABASE_URL, SUPABASE_SERVICE_ROLE_K
     // Total Amount Settled across all campaigns (SUM of
     // donations.settled_amount). Read separately so the existing totals
     // above are unaffected; null if it could not be read.
-    const settledTotals = await getSettledTotalsByCampaign(SUPABASE_URL, headers);
+    const settledTotals = fastRow ? null : await getSettledTotalsByCampaign(SUPABASE_URL, headers);
 
     return res.status(200).json({
       total_patients: totalPatients,
@@ -261,13 +287,110 @@ async function handleAnalytics(req, res, { SUPABASE_URL, SUPABASE_SERVICE_ROLE_K
       total_gross_donations: totalGrossDonations,
       total_paystack_fees: totalPaystackFees,
       total_platform_fees: totalPlatformFees,
-      total_amount_settled: settledTotals ? settledTotals.total : null,
+      total_amount_settled: fastRow ? totalAmountSettled : settledTotals ? settledTotals.total : null,
       recent_donations: recentDonations,
     });
   } catch (err) {
     console.error('Unexpected error fetching analytics:', err);
     return res.status(500).json({ error: 'Unexpected server error.' });
   }
+}
+
+// =========================================================================
+// GET /api/admin/campaigns?page=N&tab=...&search=...
+// One page (50) of the admin campaign list, plus the tab counts on page 1.
+// Uses the database functions from supabase-scale-upgrade.sql so it stays
+// fast with very large numbers of campaigns. If they do not exist yet it
+// falls back to loading the whole list and slicing it here, so the
+// response looks the same either way (the fallback is just slower).
+// =========================================================================
+const ADMIN_PAGE_SIZE = 50;
+const ADMIN_TABS = ['active', 'pending', 'goal_achieved', 'archived', 'rejected', 'all'];
+
+function campaignMatchesTab(c, tab) {
+  switch (tab) {
+    case 'active':
+    case 'pending':
+    case 'archived':
+    case 'rejected':
+      return c.status === tab;
+    case 'goal_achieved': {
+      const goal = Number(c.goal_amount) || 0;
+      return goal > 0 && (Number(c.raised_amount) || 0) >= goal;
+    }
+    default:
+      return true;
+  }
+}
+
+async function handlePagedCampaignList(req, res, { SUPABASE_URL, headers, search }) {
+  const tab = ADMIN_TABS.includes(req.query.tab) ? req.query.tab : 'all';
+  const page = Math.max(1, Math.floor(Number(req.query.page)) || 1);
+  const offset = (page - 1) * ADMIN_PAGE_SIZE;
+
+  let rows = null;
+  let hasMore = false;
+  let counts = null;
+
+  // ---- Fast path: database functions ----
+  const listRpc = await callRpc(SUPABASE_URL, headers, 'admin_list_campaigns', {
+    p_tab: tab,
+    p_search: search,
+    p_limit: ADMIN_PAGE_SIZE + 1, // one extra row tells us whether another page exists
+    p_offset: offset,
+  });
+  if (listRpc.ok && Array.isArray(listRpc.data)) {
+    let countsOk = true;
+    if (page === 1) {
+      const countsRpc = await callRpc(SUPABASE_URL, headers, 'admin_campaign_counts', { p_search: search });
+      const r = countsRpc.ok && Array.isArray(countsRpc.data) ? countsRpc.data[0] : null;
+      if (r) {
+        counts = {
+          all: Number(r.all_count) || 0,
+          active: Number(r.active_count) || 0,
+          pending: Number(r.pending_count) || 0,
+          goal_achieved: Number(r.goal_achieved_count) || 0,
+          archived: Number(r.archived_count) || 0,
+          rejected: Number(r.rejected_count) || 0,
+        };
+      } else {
+        countsOk = false;
+      }
+    }
+    if (countsOk) {
+      hasMore = listRpc.data.length > ADMIN_PAGE_SIZE;
+      rows = listRpc.data.slice(0, ADMIN_PAGE_SIZE);
+    }
+  }
+
+  // ---- Fallback: the original method, then slice ----
+  if (rows === null) {
+    let url = `${SUPABASE_URL}/rest/v1/fundraiser?select=*&order=created_at.desc,id.desc`;
+    if (search) url += `&patient_name=ilike.*${encodeURIComponent(search)}*`;
+    const all = await fetchAllRows(url, headers);
+    if (!all.ok) {
+      console.error('Supabase error:', all.errorText);
+      return res.status(500).json({ error: 'Failed to fetch campaigns.' });
+    }
+    const inTab = all.rows.filter((c) => campaignMatchesTab(c, tab));
+    rows = inTab.slice(offset, offset + ADMIN_PAGE_SIZE);
+    hasMore = inTab.length > offset + ADMIN_PAGE_SIZE;
+    if (page === 1) {
+      counts = {};
+      for (const t of ADMIN_TABS) counts[t] = all.rows.filter((c) => campaignMatchesTab(c, t)).length;
+    }
+  }
+
+  // Amount Settled for just the campaigns on this page.
+  const settled = await getSettledForCampaigns(SUPABASE_URL, headers, rows.map((c) => c.id));
+  const campaigns = rows.map((c) => ({
+    ...c,
+    amount_settled: settled ? settled[c.id] || 0 : null,
+  }));
+
+  const body = { campaigns, has_more: hasMore };
+  if (counts) body.counts = counts;
+  return res.status(200).json(body);
 }
 
 // =========================================================================
@@ -326,6 +449,13 @@ export default async function handler(req, res) {
     // ---------------------------------------------------------------
     if (req.method === 'GET') {
       const search = (req.query.search || '').trim();
+
+      // The dashboard asks for one page at a time (?page=N&tab=...).
+      // Without ?page the whole list is returned, exactly as before.
+      if (req.query.page !== undefined) {
+        return handlePagedCampaignList(req, res, { SUPABASE_URL, headers, search });
+      }
+
       // order=created_at.desc,id.desc keeps the exact same visible order;
       // the id tie-break just makes paging deterministic when two
       // campaigns share a timestamp.
