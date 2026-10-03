@@ -462,6 +462,10 @@
       </tbody>
     </table>
   </div>
+  <!-- "Load more": shown only when the server says another page of campaigns exists -->
+  <div id="campaignLoadMoreWrap" style="text-align:center; margin:-14px 0 26px;" hidden>
+    <button type="button" class="btn-secondary" id="campaignLoadMoreBtn" style="flex:none; padding:10px 26px;">Load more</button>
+  </div>
 
   <!-- ============ RECENT DONATIONS ============ -->
   <h2 class="section-title">Recent Donations</h2>
@@ -871,26 +875,51 @@
   let currentTab = 'active'; // which of the four tabs is currently shown
   let beneficiarySummaries = {}; // fundraiser_id -> masked beneficiary summary, for the table's Beneficiary column
 
-  async function loadBeneficiarySummaries() {
+  // Only the campaigns currently on screen are looked up (in chunks of
+  // 100), so this stays small no matter how many campaigns exist in
+  // total. Pass onlyIds to add just newly loaded campaigns to what is
+  // already known; with no argument it refreshes every campaign shown.
+  async function loadBeneficiarySummaries(onlyIds = null) {
     try {
-      const res = await fetch('/api/admin/beneficiaries?all=1');
-      if (!res.ok) return;
-      const data = await res.json();
-      beneficiarySummaries = {};
-      (data.beneficiaries || []).forEach((b) => {
-        beneficiarySummaries[b.fundraiser_id] = b;
-      });
+      const ids = onlyIds || currentCampaignsCache.map((c) => c.id);
+      const fresh = {};
+      for (let i = 0; i < ids.length; i += 100) {
+        const res = await fetch(`/api/admin/beneficiaries?all=1&ids=${ids.slice(i, i + 100).join(',')}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        (data.beneficiaries || []).forEach((b) => {
+          fresh[b.fundraiser_id] = b;
+        });
+      }
+      beneficiarySummaries = onlyIds ? { ...beneficiarySummaries, ...fresh } : fresh;
     } catch (err) {
       console.error('Failed to load beneficiary summaries:', err);
     }
   }
 
+  // The server returns 50 campaigns at a time for the selected tab (and
+  // search), plus the numbers shown on the tabs. "Load more" fetches the
+  // next page. campaignLoadToken makes sure a slow answer for an older
+  // tab or search can never overwrite a newer one.
+  let currentSearch = '';
+  let currentPage = 1;
+  let hasMoreCampaigns = false;
+  let campaignCounts = null; // { active, pending, goal_achieved, archived, rejected, all }
+  let campaignLoadToken = 0;
+
+  function campaignPageUrl(page) {
+    let url = `/api/admin/campaigns?page=${page}&tab=${encodeURIComponent(currentTab)}`;
+    if (currentSearch) url += `&search=${encodeURIComponent(currentSearch)}`;
+    return url;
+  }
+
   async function loadCampaigns(search = '') {
+    const token = ++campaignLoadToken;
+    currentSearch = search;
+    currentPage = 1;
     try {
-      const url = search
-        ? `/api/admin/campaigns?search=${encodeURIComponent(search)}`
-        : '/api/admin/campaigns';
-      const res = await fetch(url);
+      const res = await fetch(campaignPageUrl(1));
+      if (token !== campaignLoadToken) return;
       if (!res.ok) {
         const message = await describeFailedResponse(res, 'Loading campaigns');
         showDashboardError(`Could not load campaigns: ${message}`);
@@ -898,11 +927,16 @@
         return;
       }
       const data = await res.json();
+      if (token !== campaignLoadToken) return;
       clearDashboardError();
       currentCampaignsCache = data.campaigns || [];
+      hasMoreCampaigns = data.has_more === true;
+      if (data.counts) campaignCounts = data.counts;
       await loadBeneficiarySummaries();
+      if (token !== campaignLoadToken) return;
       updateTabCountsAndRender();
     } catch (err) {
+      if (token !== campaignLoadToken) return;
       console.error('Failed to load campaigns:', err);
       const message = err.message || 'Network error.';
       showDashboardError(`Could not load campaigns: ${message}`);
@@ -920,8 +954,8 @@
     return goal > 0 && raised >= goal;
   }
 
-  // The tabs are just different views over the SAME already-loaded
-  // list — no extra API calls, no separate data source.
+  // The server already returns only the selected tab's campaigns; this
+  // stays as a harmless safety filter over what is on screen.
   function filterCampaignsByTab(campaigns, tab) {
     switch (tab) {
       case 'active':
@@ -941,22 +975,66 @@
   }
 
   function updateTabCountsAndRender() {
-    document.getElementById('countActive').textContent = filterCampaignsByTab(currentCampaignsCache, 'active').length;
-    document.getElementById('countPending').textContent = filterCampaignsByTab(currentCampaignsCache, 'pending').length;
-    document.getElementById('countGoalAchieved').textContent = filterCampaignsByTab(currentCampaignsCache, 'goal_achieved').length;
-    document.getElementById('countArchived').textContent = filterCampaignsByTab(currentCampaignsCache, 'archived').length;
-    document.getElementById('countRejected').textContent = filterCampaignsByTab(currentCampaignsCache, 'rejected').length;
-    document.getElementById('countAll').textContent = currentCampaignsCache.length;
+    // Tab numbers come from the server (they count ALL matching campaigns,
+    // not just the ones loaded so far).
+    if (campaignCounts) {
+      document.getElementById('countActive').textContent = campaignCounts.active;
+      document.getElementById('countPending').textContent = campaignCounts.pending;
+      document.getElementById('countGoalAchieved').textContent = campaignCounts.goal_achieved;
+      document.getElementById('countArchived').textContent = campaignCounts.archived;
+      document.getElementById('countRejected').textContent = campaignCounts.rejected;
+      document.getElementById('countAll').textContent = campaignCounts.all;
+    }
 
     renderCampaignTable(filterCampaignsByTab(currentCampaignsCache, currentTab));
+
+    const loadMoreWrap = document.getElementById('campaignLoadMoreWrap');
+    if (loadMoreWrap) loadMoreWrap.hidden = !hasMoreCampaigns;
   }
+
+  async function loadMoreCampaigns() {
+    const btn = document.getElementById('campaignLoadMoreBtn');
+    const token = campaignLoadToken;
+    btn.disabled = true;
+    btn.textContent = 'Loading...';
+    try {
+      const res = await fetch(campaignPageUrl(currentPage + 1));
+      if (token !== campaignLoadToken) return; // tab or search changed meanwhile
+      if (!res.ok) {
+        const message = await describeFailedResponse(res, 'Loading more campaigns');
+        showDashboardError(`Could not load more campaigns: ${message}`);
+        btn.textContent = 'Could not load. Tap to try again';
+        return;
+      }
+      const data = await res.json();
+      if (token !== campaignLoadToken) return;
+      const known = new Set(currentCampaignsCache.map((c) => c.id));
+      const fresh = (data.campaigns || []).filter((c) => !known.has(c.id));
+      currentCampaignsCache = currentCampaignsCache.concat(fresh);
+      currentPage += 1;
+      hasMoreCampaigns = data.has_more === true;
+      await loadBeneficiarySummaries(fresh.map((c) => c.id));
+      if (token !== campaignLoadToken) return;
+      btn.textContent = 'Load more';
+      updateTabCountsAndRender();
+    } catch (err) {
+      if (token !== campaignLoadToken) return;
+      console.error('Failed to load more campaigns:', err);
+      btn.textContent = 'Could not load. Tap to try again';
+    } finally {
+      if (token === campaignLoadToken) btn.disabled = false;
+    }
+  }
+  document.getElementById('campaignLoadMoreBtn').addEventListener('click', loadMoreCampaigns);
 
   document.getElementById('campaignTabs').addEventListener('click', (e) => {
     const btn = e.target.closest('.tab-btn');
     if (!btn) return;
     currentTab = btn.dataset.tab;
     document.querySelectorAll('#campaignTabs .tab-btn').forEach((b) => b.classList.toggle('active', b === btn));
-    updateTabCountsAndRender();
+    campaignTableBody.innerHTML = '<tr><td colspan="13" class="status-msg">Loading campaigns...</td></tr>';
+    document.getElementById('campaignLoadMoreWrap').hidden = true;
+    loadCampaigns(currentSearch);
   });
 
   function renderCampaignTable(campaigns) {
