@@ -466,17 +466,128 @@
   let selectedFileBase64 = null;
   let selectedFileContentType = null;
 
+  /*
+    =========================================================
+    PHOTO COMPRESSION (runs in the browser, before upload)
+    =========================================================
+    Shrinks a chosen photo to about 100 KB so thousands of
+    campaigns fit in storage. The longest side is limited to 1080px
+    (sharp on phones and desktops) and the photo is re-encoded as
+    WebP, or JPEG where WebP is unsupported, at the highest quality that
+    fits the target. If anything fails, the original file is used
+    unchanged, so uploading never gets worse than before.
+  */
+  const PHOTO_TARGET_BYTES = 100 * 1024;
+  const PHOTO_MAX_SIDE = 1080;
+  const PHOTO_MIN_SIDE = 640;
+  const PHOTO_QUALITIES = [0.85, 0.75, 0.65, 0.55];
+
+  function photoFileToDataUrl(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+  }
+
+  function photoBlobToDataUrl(blob) {
+    return photoFileToDataUrl(blob);
+  }
+
+  function photoDecode(file) {
+    const viaImg = () => new Promise((resolve, reject) => {
+      const url = URL.createObjectURL(file);
+      const img = new Image();
+      img.onload = () => { URL.revokeObjectURL(url); resolve(img); };
+      img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('decode failed')); };
+      img.src = url;
+    });
+    if (window.createImageBitmap) {
+      return createImageBitmap(file, { imageOrientation: 'from-image' }).catch(viaImg);
+    }
+    return viaImg();
+  }
+
+  function photoCanvasToBlob(canvas, type, quality) {
+    return new Promise((resolve) => {
+      try { canvas.toBlob((b) => resolve(b), type, quality); } catch (e) { resolve(null); }
+    });
+  }
+
+  async function compressPhoto(file) {
+    const original = async () => ({ dataUrl: await photoFileToDataUrl(file), contentType: file.type });
+    try {
+      const src = await photoDecode(file);
+      const w0 = src.naturalWidth || src.width;
+      const h0 = src.naturalHeight || src.height;
+      if (!w0 || !h0) throw new Error('no size');
+
+      // Already small and not oversized: leave it exactly as it is.
+      if (file.size <= PHOTO_TARGET_BYTES && Math.max(w0, h0) <= PHOTO_MAX_SIDE) {
+        if (src.close) src.close();
+        return await original();
+      }
+
+      let scale = Math.min(1, PHOTO_MAX_SIDE / Math.max(w0, h0));
+      let best = null;
+      for (;;) {
+        const w = Math.max(1, Math.round(w0 * scale));
+        const h = Math.max(1, Math.round(h0 * scale));
+        const canvas = document.createElement('canvas');
+        canvas.width = w;
+        canvas.height = h;
+        const ctx = canvas.getContext('2d');
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, w, h);
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = 'high';
+        ctx.drawImage(src, 0, 0, w, h);
+
+        for (const q of PHOTO_QUALITIES) {
+          let blob = await photoCanvasToBlob(canvas, 'image/webp', q);
+          if (!blob || blob.type !== 'image/webp') blob = await photoCanvasToBlob(canvas, 'image/jpeg', q);
+          if (!blob) continue;
+          best = blob;
+          if (blob.size <= PHOTO_TARGET_BYTES) {
+            if (src.close) src.close();
+            return { dataUrl: await photoBlobToDataUrl(blob), contentType: blob.type };
+          }
+        }
+        if (Math.max(w, h) <= PHOTO_MIN_SIDE) break;
+        scale *= 0.85;
+      }
+      if (src.close) src.close();
+
+      // Could not reach the target: use the smallest result, but never a
+      // file bigger than the original.
+      if (best && best.size < file.size) {
+        return { dataUrl: await photoBlobToDataUrl(best), contentType: best.type };
+      }
+      return await original();
+    } catch (err) {
+      console.warn('Photo compression skipped:', err);
+      return await original();
+    }
+  }
+
+  // Holds the in-progress compression so the form never submits before
+  // the photo is ready.
+  let photoWork = null;
+
   photoInput.addEventListener('change', () => {
     const file = photoInput.files[0];
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => {
-      selectedFileBase64 = reader.result;
-      selectedFileContentType = file.type;
+    selectedFileBase64 = null;
+    selectedFileContentType = null;
+    const work = compressPhoto(file).then((result) => {
+      if (photoWork !== work) return; // a newer photo was chosen meanwhile
+      selectedFileBase64 = result.dataUrl;
+      selectedFileContentType = result.contentType;
       imagePreview.src = selectedFileBase64;
       imagePreview.classList.add('visible');
-    };
-    reader.readAsDataURL(file);
+    });
+    photoWork = work;
   });
 
   /*
@@ -497,6 +608,7 @@
   submitForm.addEventListener('submit', async (e) => {
     e.preventDefault();
     formError.textContent = '';
+    if (photoWork) await photoWork;
 
     const payload = {
       submitter_name: document.getElementById('submitterName').value.trim(),
