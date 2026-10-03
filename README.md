@@ -604,6 +604,27 @@ existing campaign's photo, and the admin dashboard's own "Add New
 Campaign" form (where an admin creates a campaign directly) still
 treats the photo as optional, unchanged.
 
+**Photos are compressed in the browser before upload.** Both photo
+upload screens (`submit-campaign.html` and the admin dashboard's
+campaign form) shrink the chosen photo before it is sent: the longest
+side is limited to 1080px and the photo is re-encoded as WebP (JPEG on
+browsers without WebP) at the highest quality that fits about 100 KB.
+A phone photo of several MB typically becomes 50 to 100 KB and stays
+clear. A photo that is already small is sent untouched, and if
+compression ever fails the original file is used, so uploading never
+gets worse than before. No server file changed for this, so the
+`api/` function count is unchanged. This is what lets the free Supabase
+storage allowance (1 GB) hold roughly 10,000 campaign photos.
+
+**Photo file sizes in the admin dashboard.** Every campaign row shows its
+photo's file size under the patient name (for example `85.0 KB`), and
+the full-size photo view shows it too. A photo over 100 KB turns red and
+reads "over 100 KB", so older, uncompressed photos are easy to spot and
+Reject from the Pending Review tab. Sizes are read from the photo's public
+address in the admin's browser (nothing on the server or database), are
+remembered while the page is open, and show "Size unknown" if a photo
+cannot be read.
+
 **No-photo placeholder.** A small number of very old campaign records
 (from before a photo was ever required) may still have no `image_url`
 at all. Rather than falling back to a local placeholder image file, the
