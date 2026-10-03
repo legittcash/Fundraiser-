@@ -163,6 +163,19 @@
     cursor: pointer;
   }
 
+  /* Photo file size under the patient name. Turns red and bold when the
+     photo is over 100 KB so an admin can spot (and reject) heavy photos. */
+  td.name-cell .name-col { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+  .photo-size { font-size: 0.74rem; color: var(--text-muted); white-space: nowrap; }
+  .photo-size.over { color: #b91c1c; font-weight: 700; }
+  .photo-lightbox-size {
+    position: absolute; left: 10px; bottom: 10px;
+    background: rgba(17, 24, 39, 0.78); color: #fff;
+    padding: 4px 12px; border-radius: 999px; font-size: 0.82rem; font-weight: 600;
+  }
+  .photo-lightbox-size.over { background: #b91c1c; }
+  .photo-lightbox-size[hidden] { display: none; }
+
   /* ==========================================================
      PHOTO LIGHTBOX — admin-only, full uncropped patient photo.
      Tapping/clicking the small thumbnail above opens this. Uses the
@@ -631,6 +644,7 @@
   <div class="photo-lightbox">
     <button type="button" class="photo-lightbox-close" id="photoLightboxClose" aria-label="Close photo">&times;</button>
     <img id="photoLightboxImg" src="" alt="Full-size patient photo" />
+    <div class="photo-lightbox-size" id="photoLightboxSize" hidden></div>
   </div>
 </div>
 
@@ -1094,7 +1108,10 @@
       <tr>
         <td class="name-cell">
           <img src="${escapeHtml(c.image_url || NO_PHOTO_PLACEHOLDER)}" alt="" onclick="openPhotoLightbox('${escapeJs(c.image_url || NO_PHOTO_PLACEHOLDER)}')" />
-          <span>${escapeHtml(c.patient_name)}</span>
+          <div class="name-col">
+            <span>${escapeHtml(c.patient_name)}</span>
+            ${c.image_url ? `<div class="photo-size" data-url="${escapeHtml(c.image_url)}">Checking size…</div>` : ''}
+          </div>
         </td>
         <td class="nowrap">₦${goal.toLocaleString()}</td>
         <td class="nowrap">₦${raised.toLocaleString()}</td>
@@ -1118,6 +1135,91 @@
       </tr>
     `;
     }).join('');
+    hydratePhotoSizes();
+  }
+
+  /*
+    ---------------------------------------------------------
+    PHOTO FILE SIZES
+    ---------------------------------------------------------
+    The size of each campaign photo is read straight from the photo's
+    public address (a HEAD request, falling back to downloading it), so
+    nothing on the server or in the database is involved. Results are
+    remembered, so redrawing the table (tabs, Load more) is instant, and
+    only 6 photos are checked at a time.
+  */
+  const PHOTO_LIMIT_BYTES = 100 * 1024;
+  const photoSizeCache = new Map();    // url -> bytes, or null if unknown
+  const photoSizeInFlight = new Map(); // url -> Promise
+
+  function formatPhotoSize(bytes) {
+    return bytes >= 1024 * 1024
+      ? (bytes / (1024 * 1024)).toFixed(1) + ' MB'
+      : (bytes / 1024).toFixed(1) + ' KB';
+  }
+
+  function photoSizeLabel(bytes) {
+    if (bytes == null) return { text: 'Size unknown', over: false };
+    const over = bytes > PHOTO_LIMIT_BYTES;
+    return { text: formatPhotoSize(bytes) + (over ? ' · over 100 KB' : ''), over };
+  }
+
+  async function fetchPhotoBytes(url) {
+    try {
+      const head = await fetch(url, { method: 'HEAD' });
+      if (head.ok) {
+        const n = Number(head.headers.get('content-length'));
+        if (n > 0) return n;
+      }
+    } catch (e) { /* fall through to a full download */ }
+    try {
+      const full = await fetch(url);
+      if (full.ok) return (await full.blob()).size;
+    } catch (e) { /* size stays unknown */ }
+    return null;
+  }
+
+  function getPhotoBytes(url) {
+    if (photoSizeCache.has(url)) return Promise.resolve(photoSizeCache.get(url));
+    if (!photoSizeInFlight.has(url)) {
+      photoSizeInFlight.set(url, fetchPhotoBytes(url).then((bytes) => {
+        photoSizeCache.set(url, bytes);
+        photoSizeInFlight.delete(url);
+        return bytes;
+      }));
+    }
+    return photoSizeInFlight.get(url);
+  }
+
+  function paintPhotoSize(el, bytes) {
+    const label = photoSizeLabel(bytes);
+    el.textContent = label.text;
+    el.classList.toggle('over', label.over);
+    el.title = label.over ? 'This photo is larger than 100 KB' : '';
+  }
+
+  function paintPhotoSizesFor(url, bytes) {
+    campaignTableBody.querySelectorAll('.photo-size[data-url]').forEach((el) => {
+      if (el.dataset.url === url) paintPhotoSize(el, bytes);
+    });
+  }
+
+  function hydratePhotoSizes() {
+    const waiting = [];
+    campaignTableBody.querySelectorAll('.photo-size[data-url]').forEach((el) => {
+      const url = el.dataset.url;
+      if (photoSizeCache.has(url)) paintPhotoSize(el, photoSizeCache.get(url));
+      else if (!waiting.includes(url)) waiting.push(url);
+    });
+    let next = 0;
+    const worker = async () => {
+      while (next < waiting.length) {
+        const url = waiting[next++];
+        const bytes = await getPhotoBytes(url);
+        paintPhotoSizesFor(url, bytes);
+      }
+    };
+    for (let i = 0; i < 6; i++) worker();
   }
 
   // A compact, honest summary for the table's "Beneficiary" column —
@@ -1358,14 +1460,29 @@
   const photoLightboxImg = document.getElementById('photoLightboxImg');
   const photoLightboxClose = document.getElementById('photoLightboxClose');
 
+  const photoLightboxSize = document.getElementById('photoLightboxSize');
+
   window.openPhotoLightbox = function (imageUrl) {
     photoLightboxImg.src = imageUrl;
     photoLightboxOverlay.classList.add('open');
+    // Show the file size on the full-size view too (not for the built-in
+    // "no photo" placeholder, which is not a real file).
+    photoLightboxSize.hidden = true;
+    if (/^https?:/i.test(imageUrl)) {
+      getPhotoBytes(imageUrl).then((bytes) => {
+        if (photoLightboxImg.getAttribute('src') !== imageUrl) return; // closed or changed
+        const label = photoSizeLabel(bytes);
+        photoLightboxSize.textContent = label.text;
+        photoLightboxSize.classList.toggle('over', label.over);
+        photoLightboxSize.hidden = false;
+      });
+    }
   };
 
   function closePhotoLightbox() {
     photoLightboxOverlay.classList.remove('open');
     photoLightboxImg.src = '';
+    photoLightboxSize.hidden = true;
   }
 
   photoLightboxClose.addEventListener('click', closePhotoLightbox);
@@ -1413,11 +1530,11 @@
     saveCampaignBtn.textContent = 'Uploading photo...';
 
     try {
-      const base64 = await readFileAsBase64(file);
+      const photo = await compressPhoto(file);
       const res = await fetch('/api/admin/campaigns?route=upload-image', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ fileBase64: base64, contentType: file.type }),
+        body: JSON.stringify({ fileBase64: photo.dataUrl, contentType: photo.contentType }),
       });
       const data = await res.json();
 
@@ -1437,6 +1554,111 @@
       saveCampaignBtn.textContent = 'Save Campaign';
     }
   });
+
+  /*
+    =========================================================
+    PHOTO COMPRESSION (runs in the browser, before upload)
+    =========================================================
+    Shrinks a chosen photo to about 100 KB so thousands of
+    campaigns fit in storage. The longest side is limited to 1080px
+    (sharp on phones and desktops) and the photo is re-encoded as
+    WebP, or JPEG where WebP is unsupported, at the highest quality that
+    fits the target. If anything fails, the original file is used
+    unchanged, so uploading never gets worse than before.
+  */
+  const PHOTO_TARGET_BYTES = 100 * 1024;
+  const PHOTO_MAX_SIDE = 1080;
+  const PHOTO_MIN_SIDE = 640;
+  const PHOTO_QUALITIES = [0.85, 0.75, 0.65, 0.55];
+
+  function photoFileToDataUrl(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+  }
+
+  function photoBlobToDataUrl(blob) {
+    return photoFileToDataUrl(blob);
+  }
+
+  function photoDecode(file) {
+    const viaImg = () => new Promise((resolve, reject) => {
+      const url = URL.createObjectURL(file);
+      const img = new Image();
+      img.onload = () => { URL.revokeObjectURL(url); resolve(img); };
+      img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('decode failed')); };
+      img.src = url;
+    });
+    if (window.createImageBitmap) {
+      return createImageBitmap(file, { imageOrientation: 'from-image' }).catch(viaImg);
+    }
+    return viaImg();
+  }
+
+  function photoCanvasToBlob(canvas, type, quality) {
+    return new Promise((resolve) => {
+      try { canvas.toBlob((b) => resolve(b), type, quality); } catch (e) { resolve(null); }
+    });
+  }
+
+  async function compressPhoto(file) {
+    const original = async () => ({ dataUrl: await photoFileToDataUrl(file), contentType: file.type });
+    try {
+      const src = await photoDecode(file);
+      const w0 = src.naturalWidth || src.width;
+      const h0 = src.naturalHeight || src.height;
+      if (!w0 || !h0) throw new Error('no size');
+
+      // Already small and not oversized: leave it exactly as it is.
+      if (file.size <= PHOTO_TARGET_BYTES && Math.max(w0, h0) <= PHOTO_MAX_SIDE) {
+        if (src.close) src.close();
+        return await original();
+      }
+
+      let scale = Math.min(1, PHOTO_MAX_SIDE / Math.max(w0, h0));
+      let best = null;
+      for (;;) {
+        const w = Math.max(1, Math.round(w0 * scale));
+        const h = Math.max(1, Math.round(h0 * scale));
+        const canvas = document.createElement('canvas');
+        canvas.width = w;
+        canvas.height = h;
+        const ctx = canvas.getContext('2d');
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, w, h);
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = 'high';
+        ctx.drawImage(src, 0, 0, w, h);
+
+        for (const q of PHOTO_QUALITIES) {
+          let blob = await photoCanvasToBlob(canvas, 'image/webp', q);
+          if (!blob || blob.type !== 'image/webp') blob = await photoCanvasToBlob(canvas, 'image/jpeg', q);
+          if (!blob) continue;
+          best = blob;
+          if (blob.size <= PHOTO_TARGET_BYTES) {
+            if (src.close) src.close();
+            return { dataUrl: await photoBlobToDataUrl(blob), contentType: blob.type };
+          }
+        }
+        if (Math.max(w, h) <= PHOTO_MIN_SIDE) break;
+        scale *= 0.85;
+      }
+      if (src.close) src.close();
+
+      // Could not reach the target: use the smallest result, but never a
+      // file bigger than the original.
+      if (best && best.size < file.size) {
+        return { dataUrl: await photoBlobToDataUrl(best), contentType: best.type };
+      }
+      return await original();
+    } catch (err) {
+      console.warn('Photo compression skipped:', err);
+      return await original();
+    }
+  }
 
   function readFileAsBase64(file) {
     return new Promise((resolve, reject) => {
