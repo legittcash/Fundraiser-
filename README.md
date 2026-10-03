@@ -407,6 +407,15 @@ table, plus a unique index on `tracking_token`. It uses
 `add column if not exists` throughout, never drops or replaces the
 table, and is always safe to re-run. Run it **after** `supabase.sql`.
 
+### 4c. Run `supabase-scale-upgrade.sql` (speed for very large numbers of campaigns)
+Supabase → **SQL Editor** → **New query** → paste the **entire**
+`supabase-scale-upgrade.sql` file → **Run**. It only adds indexes and
+read only functions (nothing is deleted, reset or changed) and is safe
+to run again. The website works with or without it: the server uses the
+new functions when they exist and falls back to its older, slower
+method when they do not, so it does not matter whether you run the SQL
+or upload the code first. See **Scaling to very large numbers** below.
+
 ### 4b. Double check the storage bucket exists
 Storage → confirm a **Public** bucket named exactly `campaign-images`
 exists (create it if not).
@@ -518,7 +527,8 @@ patient-fundraiser/
 │                                    # removed — see "No-photo placeholder" below
 ├── lib/
 │   ├── admin-auth.js                  # Shared login-session helper used by admin APIs
-│   ├── supabase-paging.js             # Shared helper: reads a whole table in pages of 1000 (admin totals/lists)
+│   ├── supabase-paging.js             # Shared helpers: fetchAllRows (reads a whole table in pages of 1000)
+│                                       # and callRpc (calls the database functions from supabase-scale-upgrade.sql)
 │   ├── amount-settled.js              # Shared helper: SUM(donations.settled_amount) for one campaign
 │   │                                  # (used by api/campaign.js and api/progress.js)
 │   ├── campaign-images.js             # Shared helper: upload/delete campaign photos in Storage
@@ -566,6 +576,7 @@ patient-fundraiser/
 │                                        # it's just Paystack's public bank list), ?route=verify,
 │                                        # ?route=settlement, and ?route=platform-fee (all admin-only)
 ├── supabase.sql                     # Full schema: tables, migrations, storage bucket — always safe to re-run
+├── supabase-scale-upgrade.sql       # Additive migration: indexes + read only database functions for scale (run once)
 ├── supabase-settled-amount.sql      # Additive migration: donations.settled_amount + the updated
 │                                     # record_donation_and_update_totals function (run once)
 ├── supabase-tracking.sql            # Additive migration: submitter_name/email/phone, tracking_token,
@@ -913,6 +924,36 @@ the admin beneficiary summaries, and the full public campaign list
 (`api/campaigns.js` without `?page`, same newest first order, search
 unchanged). The calculations themselves are unchanged, and for tables
 under 1000 rows it is exactly one request, as before.
+
+## Scaling to very large numbers
+
+`supabase-scale-upgrade.sql` and the matching server code let the site
+cope with tens of thousands of campaigns and hundreds of thousands of
+donations. What it changes:
+
+- **Indexes** on donations (by campaign, by newest, settled only), on
+  campaigns (by status and newest), and a trigram index so the name
+  search boxes stay fast. These need no code and simply make lookups
+  quick as tables grow.
+- **Admin Overview totals** are added up by the database
+  (`admin_overview_totals`) instead of downloading every donation. The
+  numbers and their definitions are unchanged.
+- **Admin campaign list** is served 50 at a time with a "Load more"
+  button, one tab at a time. The tab numbers are true totals from the
+  database (`admin_campaign_counts`). Beneficiary summaries and the
+  Amount Settled column are only fetched for the campaigns on screen.
+  `GET /api/admin/campaigns` without `?page` still returns everything,
+  as before.
+- **Public Amount Settled** for a campaign is summed by the database
+  (`campaign_amount_settled`) instead of row by row on every page view.
+
+Every one of these has a fallback to the previous method if the SQL has
+not been run, so nothing breaks in either order. The functions are only
+callable with the service role key (never by visitors).
+
+What this does not cover: patient photo storage (100,000 photos needs a
+paid Supabase storage plan and smaller stored images), and the free
+Vercel and Supabase plans' own usage limits and terms.
 
 ### Homepage "Load more"
 
