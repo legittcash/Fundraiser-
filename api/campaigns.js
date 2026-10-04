@@ -13,7 +13,8 @@
 // exactly as before, so nothing that already calls this endpoint breaks.
 //
 // This never exposes archived campaigns, and only returns the fields the
-// homepage cards actually need. Each campaign also carries a single
+// homepage cards and filters actually need (diagnosis is already public on
+// every campaign page; the homepage filter bar uses it). Each campaign also carries a single
 // yes/no field, beneficiary_verified, for the public "Verified" badge.
 //
 // The full list (no ?page) is read in pages of 1000
@@ -43,7 +44,7 @@ export default async function handler(req, res) {
 
   let url =
     `${SUPABASE_URL}/rest/v1/fundraiser` +
-    `?select=id,slug,patient_name,hospital,image_url,goal_amount,raised_amount,donor_count` +
+    `?select=id,slug,patient_name,hospital,diagnosis,image_url,goal_amount,raised_amount,donor_count` +
     `&status=eq.active&order=created_at.desc,id.desc`; // id tie-break: same newest first order, stable paging
 
   if (search) {
