@@ -125,6 +125,116 @@
   }
 
   /* ==========================================================
+     FILTER AND SORT BAR: small rounded chips, all in ONE line.
+     Everything inside is sized in em and the font size follows the
+     screen width, so the five chips always fit side by side, even on
+     small phones. A chip shows its name with a small solid arrow, then
+     the chosen value once something is picked (long values are cut
+     short with "..." rather than starting a new line). The real
+     dropdown sits invisibly over the chip, so the phone's own picker
+     opens on tap.
+     ========================================================== */
+  .filter-bar {
+    display: flex;
+    flex-wrap: nowrap;
+    align-items: center;
+    gap: 0.3em;
+    margin: -16px 0 8px;
+    font-size: clamp(9px, 2.85vw, 12px);
+  }
+  .fs-chips { display: flex; flex-wrap: nowrap; gap: 0.3em; flex: 1 1 auto; min-width: 0; }
+  .fs-tools { display: flex; flex: 0 1 auto; min-width: 5.4em; max-width: 38%; }
+  .fs-chip {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.3em;
+    height: 2.5em;
+    padding: 0 0.45em;
+    min-width: 5.4em;
+    background: #fff;
+    border: 1px solid #d9dfe6;
+    border-radius: 0.85em;
+    color: var(--text-dark);
+    font-size: 1em;
+    font-weight: 500;
+    line-height: 1;
+    white-space: nowrap;
+  }
+  .fs-chips .fs-chip { flex: 1 1 auto; }
+  .fs-tools .fs-chip { flex: 1 1 auto; }
+  .fs-chip:hover { border-color: #aab4bf; }
+  .fs-chip:focus-within { outline: 2px solid var(--pink); outline-offset: 1px; }
+  .fs-chip.is-active { border-color: var(--pink); background: #fff7fb; color: var(--pink-dark); font-weight: 600; }
+  .fs-chip-text { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+  .fs-chip-text .short { display: none; }
+  @media (max-width: 440px) {
+    .fs-chip-text .full { display: none; }
+    .fs-chip-text .short { display: inline; }
+  }
+  .fs-caret {
+    flex: 0 0 auto;
+    width: 0;
+    height: 0;
+    border-left: 0.31em solid transparent;
+    border-right: 0.31em solid transparent;
+    border-top: 0.4em solid currentColor;
+  }
+  .fs-sort-icon { flex: 0 0 auto; width: 1.1em; height: 0.95em; }
+  .fs-select {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    margin: 0;
+    opacity: 0;
+    cursor: pointer;
+    font-size: 16px;
+    -webkit-appearance: none;
+    appearance: none;
+  }
+  /* Line under the chips, shown only while a filter or sort is active:
+     how many campaigns are showing, and the Clear Filters button. */
+  .filter-info { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; margin: 0 2px 8px; }
+  .filter-info[hidden] { display: none; }
+  .filter-note { font-size: 0.72rem; color: var(--text-muted); margin: 0; line-height: 1.35; }
+  .fs-clear {
+    flex: 0 0 auto;
+    background: none;
+    border: none;
+    color: var(--pink-dark);
+    font-family: inherit;
+    font-size: 0.75rem;
+    font-weight: 700;
+    padding: 0;
+    line-height: 1.35;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .fs-clear[hidden] { display: none; }
+  .fs-clear:hover { text-decoration: underline; }
+  .filter-empty { grid-column: 1 / -1; text-align: center; padding: 26px 16px; }
+  .filter-empty p { margin: 0 0 12px; color: var(--text-muted); font-size: 0.95rem; }
+  .filter-empty .fs-clear-btn {
+    background: var(--pink);
+    color: #fff;
+    border: none;
+    border-radius: 999px;
+    font-family: inherit;
+    font-weight: 700;
+    font-size: 0.85rem;
+    padding: 10px 24px;
+    cursor: pointer;
+  }
+  @media (min-width: 601px) {
+    .filter-bar { margin-top: -12px; font-size: 13px; gap: 8px; }
+    .fs-chips { gap: 8px; }
+    .fs-chip { height: 34px; padding: 0 12px; gap: 8px; border-radius: 10px; }
+    .fs-tools { max-width: 30%; }
+  }
+
+  /* ==========================================================
      CAMPAIGN CARD GRID — compact, mobile-first, 2 columns by
      default (marketplace/Jiji-style listing spirit), scaling up
      to more columns as the screen gets wider.
@@ -534,6 +644,68 @@
     <input type="text" id="searchInput" placeholder="Search patients by name..." />
   </div>
 
+  <!-- Filter and sort bar: works on the campaigns already loaded, in the
+       browser only. No extra request is made when a choice changes. -->
+  <div class="filter-bar" id="filterBar" role="group" aria-label="Filter and sort campaigns">
+    <div class="fs-chips">
+      <label class="fs-chip" data-label="Diagnosis">
+        <span class="fs-chip-text" aria-hidden="true">Diagnosis</span><span class="fs-caret" aria-hidden="true"></span>
+        <select class="fs-select" id="filterDiagnosis" aria-label="Diagnosis">
+        <option value="all">All Diagnoses</option>
+        <option value="kidney_disease">Kidney Disease</option>
+        <option value="kidney_failure">Kidney Failure</option>
+        <option value="kidney_transplant">Kidney Transplant</option>
+        <option value="cancer">Cancer</option>
+        <option value="heart">Heart Disease</option>
+        <option value="liver">Liver Disease</option>
+        <option value="neuro">Neurological Conditions</option>
+        <option value="other">Other Medical Conditions</option>
+      </select>
+      </label>
+      <label class="fs-chip" data-label="Hospital">
+        <span class="fs-chip-text" aria-hidden="true">Hospital</span><span class="fs-caret" aria-hidden="true"></span>
+        <select class="fs-select" id="filterHospital" aria-label="Hospital">
+        <option value="all">All Hospitals</option>
+      </select>
+      </label>
+      <label class="fs-chip" data-label="Verified">
+        <span class="fs-chip-text" aria-hidden="true">Verified</span><span class="fs-caret" aria-hidden="true"></span>
+        <select class="fs-select" id="filterVerified" aria-label="Verified">
+        <option value="all">All Patients</option>
+        <option value="verified">Verified Patients</option>
+      </select>
+      </label>
+      <label class="fs-chip" data-label="Funding Progress" data-short="Funding">
+        <span class="fs-chip-text" aria-hidden="true">Funding Progress</span><span class="fs-caret" aria-hidden="true"></span>
+        <select class="fs-select" id="filterProgress" aria-label="Funding Progress">
+        <option value="all">All Campaigns</option>
+        <option value="lt25">Less than 25% funded</option>
+        <option value="25-50">25%–50% funded</option>
+        <option value="50-75">50%–75% funded</option>
+        <option value="75-99">75%–99% funded</option>
+        <option value="achieved">Goal Achieved</option>
+      </select>
+      </label>
+    </div>
+    <div class="fs-tools">
+      <label class="fs-chip fs-sort" data-label="Sort">
+        <svg class="fs-sort-icon" viewBox="0 0 13 11" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><line x1="1" y1="1.5" x2="12" y2="1.5"></line><line x1="1" y1="5.5" x2="9" y2="5.5"></line><line x1="1" y1="9.5" x2="5.5" y2="9.5"></line></svg>
+        <span class="fs-chip-text" aria-hidden="true">Sort</span><span class="fs-caret" aria-hidden="true"></span>
+        <select class="fs-select" id="sortSelect" aria-label="Sort">
+        <option value="newest">Newest First</option>
+        <option value="most_funded">Most Funded</option>
+        <option value="closest">Closest to Goal</option>
+        <option value="lowest_goal">Lowest Goal</option>
+        <option value="highest_goal">Highest Goal</option>
+      </select>
+      </label>
+    </div>
+  </div>
+  <div class="filter-info" id="filterInfo" hidden>
+    <p class="filter-note" id="filterNote" aria-live="polite"></p>
+    <button type="button" class="fs-clear" id="clearFiltersBtn" hidden>Clear Filters</button>
+  </div>
+
   <div class="campaign-grid" id="campaignGrid">
     <p class="status-msg">Loading campaigns...</p>
   </div>
@@ -626,6 +798,10 @@
   let loadToken = 0;
   let shownIds = new Set();
 
+  // Every campaign loaded so far, in the order the server sent them
+  // (newest first). The filter bar works on this list in the browser.
+  let allCampaigns = [];
+
   function pageUrl(search, page) {
     let url = `/api/campaigns?page=${page}`;
     if (search) url += `&search=${encodeURIComponent(search)}`;
@@ -646,8 +822,9 @@
       if (token !== loadToken) return; // a newer search replaced this one
       const campaigns = data.campaigns || [];
       campaigns.forEach((c) => shownIds.add(c.id));
-      renderCampaigns(campaigns);
+      allCampaigns = campaigns;
       loadMoreWrap.hidden = !(data.has_more === true);
+      renderCampaigns();
     } catch (err) {
       if (token !== loadToken) return;
       console.error('Failed to load campaigns:', err);
@@ -666,9 +843,10 @@
       if (!res.ok) throw new Error(data.error || 'Request failed');
       const fresh = (data.campaigns || []).filter((c) => !shownIds.has(c.id));
       fresh.forEach((c) => shownIds.add(c.id));
-      campaignGrid.insertAdjacentHTML('beforeend', fresh.map(campaignCardHtml).join(''));
+      allCampaigns = allCampaigns.concat(fresh);
       currentPage += 1;
       loadMoreWrap.hidden = !(data.has_more === true);
+      renderCampaigns();
     } catch (err) {
       if (token !== loadToken) return;
       console.error('Failed to load more campaigns:', err);
@@ -683,13 +861,228 @@
 
   loadMoreBtn.addEventListener('click', loadMoreCampaigns);
 
-  function renderCampaigns(campaigns) {
-    if (campaigns.length === 0) {
+  /*
+    =========================================================
+    FILTERS AND SORTING (browser only)
+    =========================================================
+    Works on the campaigns already loaded by the existing
+    /api/campaigns request. Nothing here calls the server.
+    Filters combine (a campaign must match all of them) and
+    the sort then orders whatever remains.
+  */
+  const filterEls = {
+    diagnosis: document.getElementById('filterDiagnosis'),
+    hospital: document.getElementById('filterHospital'),
+    verified: document.getElementById('filterVerified'),
+    progress: document.getElementById('filterProgress'),
+  };
+  const sortEl = document.getElementById('sortSelect');
+  const clearFiltersBtn = document.getElementById('clearFiltersBtn');
+  const filterNote = document.getElementById('filterNote');
+
+  const FILTER_DEFAULT = 'all';
+
+  // Diagnosis is free text typed when a campaign is submitted, so each
+  // option matches by keyword. Nothing is changed or stored: the text
+  // each campaign already has is only read. "Kidney Disease" is the broad
+  // kidney group, so it also includes kidney failure and kidney transplant
+  // campaigns. A campaign may match more than one option. "Other" is a
+  // diagnosis that matches none of the listed groups. A campaign with no
+  // diagnosis text appears only under "All Diagnoses".
+  const KIDNEY_RE = /kidney|renal|nephr|dialysis|\bckd\b|\besrd\b/;
+  const DIAGNOSIS_RULES = {
+    kidney_disease: KIDNEY_RE,
+    kidney_failure: /(kidney|renal)\W+(\w+\W+){0,3}(failure|failing)|failure of (the )?(kidney|renal)|end[- ]stage|dialysis|\besrd\b/,
+    kidney_transplant: /(kidney|renal).{0,25}transplant|transplant.{0,25}(kidney|renal)/,
+    cancer: /cancer|carcinoma|leuk(a)?emia|lymphoma|tumou?r|sarcoma|melanoma|myeloma|oncolog|neoplasm|malignan/,
+    heart: /heart|cardi|coronary|myocard|arrhythm|angina|atrial|ventricul/,
+    liver: /liver|hepat|cirrhosis|biliary/,
+    neuro: /neuro|brain|stroke|epilep|seizure|parkinson|alzheimer|dementia|sclerosis|spinal|cerebral|palsy|paraly|meningi|hydroceph/,
+  };
+
+  function diagnosisMatches(campaign, key) {
+    const text = String(campaign.diagnosis || '').toLowerCase().trim();
+    if (!text) return false;
+    if (key === 'other') {
+      return !Object.values(DIAGNOSIS_RULES).some((re) => re.test(text));
+    }
+    return DIAGNOSIS_RULES[key] ? DIAGNOSIS_RULES[key].test(text) : false;
+  }
+
+  // Hospitals are compared ignoring capital letters and extra spaces, so
+  // "UNTH" and "unth " count as one hospital. The name shown is the one
+  // first returned by the server, unchanged.
+  function hospitalKey(name) {
+    return String(name || '').trim().replace(/\s+/g, ' ').toLowerCase();
+  }
+
+  function fundingPercent(c) {
+    const goal = Number(c.goal_amount) || 0;
+    const raised = Number(c.raised_amount) || 0;
+    return goal > 0 ? (raised / goal) * 100 : 0;
+  }
+
+  function goalReached(c) {
+    const goal = Number(c.goal_amount) || 0;
+    return goal > 0 && (Number(c.raised_amount) || 0) >= goal;
+  }
+
+  function progressMatches(c, key) {
+    const p = fundingPercent(c);
+    switch (key) {
+      case 'lt25': return p < 25;
+      case '25-50': return p >= 25 && p < 50;
+      case '50-75': return p >= 50 && p < 75;
+      case '75-99': return p >= 75 && !goalReached(c) && p < 100;
+      case 'achieved': return goalReached(c);
+      default: return true;
+    }
+  }
+
+  function filtersAreActive() {
+    return Object.values(filterEls).some((el) => el.value !== FILTER_DEFAULT);
+  }
+
+  function campaignMatchesFilters(c) {
+    if (filterEls.diagnosis.value !== FILTER_DEFAULT && !diagnosisMatches(c, filterEls.diagnosis.value)) return false;
+    if (filterEls.hospital.value !== FILTER_DEFAULT && hospitalKey(c.hospital) !== filterEls.hospital.value) return false;
+    if (filterEls.verified.value === 'verified' && c.beneficiary_verified !== true) return false;
+    if (!progressMatches(c, filterEls.progress.value)) return false;
+    return true;
+  }
+
+  function sortCampaigns(items) {
+    // Each item keeps its original position so equal values stay in the
+    // server's newest first order.
+    const indexed = items.map((c, i) => ({ c, i }));
+    const byOrder = (a, b) => a.i - b.i;
+    const num = (v) => Number(v) || 0;
+    switch (sortEl.value) {
+      case 'most_funded':
+        indexed.sort((a, b) => num(b.c.raised_amount) - num(a.c.raised_amount) || byOrder(a, b));
+        break;
+      case 'closest':
+        indexed.sort((a, b) =>
+          (goalReached(b.c) - goalReached(a.c)) ||
+          (fundingPercent(b.c) - fundingPercent(a.c)) ||
+          byOrder(a, b));
+        break;
+      case 'lowest_goal':
+        indexed.sort((a, b) => num(a.c.goal_amount) - num(b.c.goal_amount) || byOrder(a, b));
+        break;
+      case 'highest_goal':
+        indexed.sort((a, b) => num(b.c.goal_amount) - num(a.c.goal_amount) || byOrder(a, b));
+        break;
+      default:
+        indexed.sort(byOrder);
+    }
+    return indexed.map((x) => x.c);
+  }
+
+  // The hospital dropdown is built from the campaigns already loaded.
+  // The chosen hospital stays in the list even if a new search no longer
+  // contains it, so the dropdown never shows a wrong value.
+  const hospitalLabels = new Map();
+  let hospitalOptionsSignature = '';
+
+  function refreshHospitalOptions() {
+    const seen = new Map();
+    allCampaigns.forEach((c) => {
+      const key = hospitalKey(c.hospital);
+      if (key && !seen.has(key)) seen.set(key, String(c.hospital).trim());
+    });
+    seen.forEach((label, key) => { if (!hospitalLabels.has(key)) hospitalLabels.set(key, label); });
+    const selected = filterEls.hospital.value;
+    if (selected !== FILTER_DEFAULT && !seen.has(selected) && hospitalLabels.has(selected)) {
+      seen.set(selected, hospitalLabels.get(selected));
+    }
+    const entries = [...seen.entries()].sort((a, b) => a[1].localeCompare(b[1]));
+    const signature = entries.map((e) => e[0]).join('|');
+    if (signature === hospitalOptionsSignature) return;
+    hospitalOptionsSignature = signature;
+    const select = filterEls.hospital;
+    select.innerHTML = '';
+    const all = document.createElement('option');
+    all.value = FILTER_DEFAULT;
+    all.textContent = 'All Hospitals';
+    select.appendChild(all);
+    entries.forEach(([key, label]) => {
+      const opt = document.createElement('option');
+      opt.value = key;
+      opt.textContent = label;
+      select.appendChild(opt);
+    });
+    select.value = seen.has(selected) ? selected : FILTER_DEFAULT;
+  }
+
+  // A chip shows its name until something is picked, then the picked value.
+  function updateChip(select, defaultValue) {
+    const chip = select.closest('.fs-chip');
+    const text = chip.querySelector('.fs-chip-text');
+    const active = select.value !== defaultValue;
+    chip.classList.toggle('is-active', active);
+    if (active) {
+      text.textContent = select.options[select.selectedIndex].text;
+    } else if (chip.dataset.short) {
+      text.innerHTML = '<span class="full"></span><span class="short"></span>';
+      text.firstChild.textContent = chip.dataset.label;
+      text.lastChild.textContent = chip.dataset.short;
+    } else {
+      text.textContent = chip.dataset.label;
+    }
+  }
+
+  function updateFilterUi(visibleCount) {
+    Object.values(filterEls).forEach((el) => updateChip(el, FILTER_DEFAULT));
+    updateChip(sortEl, 'newest');
+    const active = filtersAreActive();
+    clearFiltersBtn.hidden = !active;
+
+    // The lists only hold the campaigns loaded so far, so say so while
+    // more pages are still waiting behind "Load more".
+    const moreWaiting = !loadMoreWrap.hidden;
+    let note = '';
+    if (active) {
+      note = 'Showing ' + visibleCount + ' of ' + allCampaigns.length + ' loaded.';
+      if (moreWaiting) note += ' Filters cover loaded campaigns only; tap Load more for more.';
+    } else if (sortEl.value !== 'newest' && moreWaiting) {
+      note = 'Sorting covers loaded campaigns only; tap Load more for more.';
+    }
+    filterNote.textContent = note;
+    document.getElementById('filterInfo').hidden = !note;
+  }
+
+  function clearFilters() {
+    Object.values(filterEls).forEach((el) => { el.value = FILTER_DEFAULT; });
+    renderCampaigns();
+  }
+
+  Object.values(filterEls).forEach((el) => el.addEventListener('change', renderCampaigns));
+  sortEl.addEventListener('change', renderCampaigns);
+  clearFiltersBtn.addEventListener('click', clearFilters);
+  Object.values(filterEls).forEach((el) => updateChip(el, FILTER_DEFAULT));
+  updateChip(sortEl, 'newest');
+  campaignGrid.addEventListener('click', (e) => {
+    if (e.target.closest('[data-clear-filters]')) clearFilters();
+  });
+
+  function renderCampaigns() {
+    refreshHospitalOptions();
+    const visible = sortCampaigns(allCampaigns.filter(campaignMatchesFilters));
+    updateFilterUi(visible.length);
+
+    if (allCampaigns.length === 0) {
       campaignGrid.innerHTML = '<p class="status-msg">No campaigns found.</p>';
       return;
     }
+    if (visible.length === 0) {
+      campaignGrid.innerHTML =
+        '<div class="filter-empty"><p>No patients match your selected filters.</p>' +
+        '<button type="button" class="fs-clear-btn" data-clear-filters>Clear Filters</button></div>';
+      return;
+    }
 
-    campaignGrid.innerHTML = campaigns.map(campaignCardHtml).join('');
+    campaignGrid.innerHTML = visible.map(campaignCardHtml).join('');
   }
 
   function campaignCardHtml(campaign) {

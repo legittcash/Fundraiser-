@@ -998,6 +998,46 @@ returns the whole list when called without `?page`, so any older caller
 keeps working. The page size is the `PAGE_SIZE` constant (24) at the top
 of `api/campaigns.js`.
 
+### Homepage filter and sort bar
+
+Small rounded chips sit above the campaign cards, all in one line even on
+small phones: Diagnosis, Hospital, Verified, Funding Progress and Sort
+(with the three line icon). The chip sizes follow the screen width, so
+nothing slides sideways or wraps. Each chip shows its name with a small
+solid arrow, then shows the chosen value once something is
+picked. Tapping a chip opens the phone's own dropdown. Everything runs in the
+browser on the campaigns the homepage has already loaded. Changing a
+dropdown makes no request, and there is no extra serverless function,
+table or SQL. The only server change is that `api/campaigns.js` now also
+returns each campaign's `diagnosis` (already public on its campaign
+page).
+
+- **Diagnosis** matches the diagnosis text each campaign already has, by
+  keyword (for example "renal" or "kidney" for Kidney Disease, "leukemia"
+  for Cancer). Kidney Disease is the broad kidney group, so it also
+  includes Kidney Failure and Kidney Transplant. Other Medical Conditions
+  is anything that matches none of the listed groups. A campaign with no
+  diagnosis text shows only under All Diagnoses. The keyword lists are the
+  `DIAGNOSIS_RULES` near the top of the filter code in `index.html`.
+- **Hospital** options are built from the hospital names in the loaded
+  campaigns, with duplicates removed (capital letters and extra spaces are
+  ignored when comparing) and the name shown exactly as first returned.
+- **Verified** keeps campaigns whose `beneficiary_verified` is true, the
+  same flag as the Verified badge.
+- **Funding Progress** uses raised amount divided by goal: under 25%, 25%
+  up to 50%, 50% up to 75%, 75% up to just under 100%, and Goal Achieved
+  (raised is at least the goal).
+- **Sort** is Newest First (the server's order), Most Funded, Closest to
+  Goal (achieved campaigns first, then highest percentage), Lowest Goal
+  and Highest Goal.
+
+Filters combine, Sort then orders the matches, and Clear Filters (shown on
+the line under the chips while a filter is active) resets the four filters.
+Long chosen values are shortened with "..." on the chip. Because the homepage loads 24 campaigns at a time, filters
+and sorting apply to the campaigns loaded so far, and the page says so
+while "Load more" is still available. The existing name search still asks
+the server and keeps the chosen filters.
+
 ## Informational pages
 
 `about-us.html`, `contact-us.html`, `our-mission.html`,
