@@ -134,12 +134,17 @@
      dropdown sits invisibly over the chip, so the phone's own picker
      opens on tap.
      ========================================================== */
+  /* One shared gap: the space between the search box and the filters is
+     the same as the space between the filters and the first campaigns.
+     (The 30px is the search box's own bottom margin.) */
+  :root { --fs-gap: 14px; }
+  @media (min-width: 601px) { :root { --fs-gap: 18px; } }
   .filter-bar {
     display: flex;
     flex-wrap: nowrap;
     align-items: center;
     gap: 0.3em;
-    margin: -16px 0 8px;
+    margin: calc(var(--fs-gap) - 30px) 0 var(--fs-gap);
     font-size: clamp(9px, 2.85vw, 12px);
   }
   .fs-chips { display: flex; flex-wrap: nowrap; gap: 0.3em; flex: 1 1 auto; min-width: 0; }
@@ -196,7 +201,7 @@
   }
   /* Line under the chips, shown only while a filter or sort is active:
      how many campaigns are showing, and the Clear Filters button. */
-  .filter-info { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; margin: 0 2px 8px; }
+  .filter-info { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; margin: calc(6px - var(--fs-gap)) 2px var(--fs-gap); }
   .filter-info[hidden] { display: none; }
   .filter-note { font-size: 0.72rem; color: var(--text-muted); margin: 0; line-height: 1.35; }
   .fs-clear {
@@ -228,7 +233,7 @@
     cursor: pointer;
   }
   @media (min-width: 601px) {
-    .filter-bar { margin-top: -12px; font-size: 13px; gap: 8px; }
+    .filter-bar { font-size: 13px; gap: 8px; }
     .fs-chips { gap: 8px; }
     .fs-chip { height: 34px; padding: 0 12px; gap: 8px; border-radius: 10px; }
     .fs-tools { max-width: 30%; }
