@@ -113,6 +113,8 @@
     display: none;
   }
   .image-preview.visible { display: block; }
+  .photo-note { font-size: 0.85rem; color: #6b7280; margin-top: 6px; }
+  .photo-note.bad { color: #b91c1c; font-weight: 600; }
 
   /* Required consent checkboxes, placed just above the Submit button.
      Uses the same card background/spacing language as the rest of the
@@ -305,6 +307,7 @@
       <label for="photoInput">Patient photo *</label>
       <input type="file" id="photoInput" accept="image/jpeg,image/png,image/webp" required />
       <img class="image-preview" id="imagePreview" alt="Preview" />
+      <div class="photo-note" id="photoNote" aria-live="polite"></div>
 
       <label for="phoneNumber">Primary contact phone *</label>
       <input type="tel" id="phoneNumber" placeholder="+234..." required />
@@ -496,18 +499,40 @@
   }
 
   function photoDecode(file) {
-    const viaImg = () => new Promise((resolve, reject) => {
-      const url = URL.createObjectURL(file);
-      const img = new Image();
-      img.onload = () => { URL.revokeObjectURL(url); resolve(img); };
-      img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('decode failed')); };
-      img.src = url;
+    // Three ways to read the photo, tried in turn, because phone browsers
+    // differ: createImageBitmap, then a blob address, then a data address.
+    const viaImgSrc = (makeSrc, cleanup) => new Promise((resolve, reject) => {
+      Promise.resolve(makeSrc()).then((src) => {
+        const img = new Image();
+        img.onload = () => { cleanup(src); resolve(img); };
+        img.onerror = () => { cleanup(src); reject(new Error('decode failed')); };
+        img.src = src;
+      }, reject);
     });
+    const viaBlobUrl = () => viaImgSrc(() => URL.createObjectURL(file), (u) => { try { URL.revokeObjectURL(u); } catch (e) {} });
+    const viaDataUrl = () => viaImgSrc(() => photoFileToDataUrl(file), () => {});
+    const viaImg = () => viaBlobUrl().catch(viaDataUrl);
     if (window.createImageBitmap) {
-      return createImageBitmap(file, { imageOrientation: 'from-image' }).catch(viaImg);
+      try {
+        return createImageBitmap(file, { imageOrientation: 'from-image' }).catch(viaImg);
+      } catch (e) {
+        return viaImg();
+      }
     }
     return viaImg();
   }
+
+  // The server accepts photos up to 3 MB, and Vercel refuses any request
+  // over 4.5 MB (which the browser reports only as "Failed to fetch").
+  // A photo that is still bigger than this after compression is stopped
+  // here with a clear message instead.
+  const PHOTO_MAX_SEND_CHARS = 4194404;
+  function photoIsTooLarge(dataUrl) {
+    return !dataUrl || dataUrl.length > PHOTO_MAX_SEND_CHARS;
+  }
+  const PHOTO_TOO_LARGE_MESSAGE =
+    'This photo is too large to upload and could not be reduced automatically. ' +
+    'Please choose a smaller photo (under 3 MB) or take a new picture.';
 
   function photoCanvasToBlob(canvas, type, quality) {
     return new Promise((resolve) => {
@@ -574,18 +599,32 @@
   // Holds the in-progress compression so the form never submits before
   // the photo is ready.
   let photoWork = null;
+  let photoTooLarge = false;
+  const photoNote = document.getElementById('photoNote');
 
   photoInput.addEventListener('change', () => {
     const file = photoInput.files[0];
     if (!file) return;
     selectedFileBase64 = null;
     selectedFileContentType = null;
+    photoTooLarge = false;
+    photoNote.textContent = 'Preparing photo...';
+    photoNote.classList.remove('bad');
     const work = compressPhoto(file).then((result) => {
       if (photoWork !== work) return; // a newer photo was chosen meanwhile
+      if (photoIsTooLarge(result.dataUrl)) {
+        photoTooLarge = true;
+        imagePreview.classList.remove('visible');
+        photoNote.textContent = PHOTO_TOO_LARGE_MESSAGE;
+        photoNote.classList.add('bad');
+        return;
+      }
       selectedFileBase64 = result.dataUrl;
       selectedFileContentType = result.contentType;
       imagePreview.src = selectedFileBase64;
       imagePreview.classList.add('visible');
+      const kb = Math.round((result.dataUrl.length * 3 / 4) / 1024);
+      photoNote.textContent = 'Photo ready (' + (kb >= 1024 ? (kb / 1024).toFixed(1) + ' MB' : kb + ' KB') + ')';
     });
     photoWork = work;
   });
@@ -609,6 +648,10 @@
     e.preventDefault();
     formError.textContent = '';
     if (photoWork) await photoWork;
+    if (photoTooLarge) {
+      formError.textContent = PHOTO_TOO_LARGE_MESSAGE;
+      return;
+    }
 
     const payload = {
       submitter_name: document.getElementById('submitterName').value.trim(),

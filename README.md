@@ -616,6 +616,13 @@ gets worse than before. No server file changed for this, so the
 `api/` function count is unchanged. This is what lets the free Supabase
 storage allowance (1 GB) hold roughly 10,000 campaign photos.
 
+The submit page shows "Photo ready (84 KB)" under the preview once the
+photo is prepared. Photos are read in three fallback ways so that older
+phone browsers still work. If a photo still cannot be brought under the
+3 MB upload limit, the page says so clearly ("This photo is too large to
+upload...") and does not send it, because Vercel rejects any request over
+4.5 MB and the browser would only report that as "Failed to fetch".
+
 **Photo file sizes in the admin dashboard.** Every campaign row shows its
 photo's file size under the patient name (for example `85.0 KB`), and
 the full-size photo view shows it too. A photo over 100 KB turns red and
