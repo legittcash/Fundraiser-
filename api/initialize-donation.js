@@ -76,7 +76,10 @@ export default async function handler(req, res) {
 
   if (!fundraiserId) return res.status(400).json({ error: 'fundraiser_id is required.' });
   if (!donorName) return res.status(400).json({ error: 'Your name is required.' });
-  if (!amount || amount < 100) return res.status(400).json({ error: 'Minimum donation is ₦100.' });
+  // Number.isFinite() also rejects Infinity, which `!amount` lets through.
+  if (!Number.isFinite(amount) || amount < 100) {
+    return res.status(400).json({ error: 'Minimum donation is ₦100.' });
+  }
   if (donorEmail && !donorEmail.includes('@')) {
     return res.status(400).json({ error: 'That email address doesn\'t look right. You can also leave it blank.' });
   }
