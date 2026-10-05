@@ -468,6 +468,31 @@ few seconds later the totals and Recent Donors list update.
 
 ---
 
+## Package contents and which files are the latest
+
+This zip was assembled on 5 October 2026 directly from the project's
+GitHub repository (`Fundraiser--main`), so every file in it is the
+committed, live version. The recent rounds are already in the repo and
+were confirmed byte for byte against the verified copies:
+
+| File | Latest change |
+|---|---|
+| `index.html` | Load more, one-line filter and sort chips, equal gaps above and below the chips, Verified badge, menu and footer |
+| `api/campaigns.js` | Adds `diagnosis` to the list response (needed by the Diagnosis filter) |
+| `submit-campaign.html` | Browser photo compression to about 100 KB, "Photo ready" note, oversize guard |
+| `admin/dashboard.html` | Photo compression, photo size labels (red over 100 KB), 50 per page with Load more, Amount Settled |
+| `api/admin/campaigns.js`, `api/admin/beneficiaries.js` | Scale upgrade versions |
+| `lib/supabase-paging.js`, `lib/amount-settled.js` | Scale upgrade helpers |
+| `supabase-scale-upgrade.sql` | Indexes and read only database functions (run once) |
+| `README.md` | Updated structure and notes (this file) |
+
+`api/initialize-donation.js` also gets one small change: the minimum-amount check now uses `Number.isFinite(amount)`, so an `Infinity` amount is rejected before it reaches Paystack.
+
+All other files (info pages, FAQs, `campaign.html`, privacy and terms,
+`api/campaign.js`, `api/progress.js`, `api/paystack-webhook.js`, the
+other SQL files and so on) are taken as they are in the repo. `api/` has
+exactly 11 files, so the project uses 11 of the 12 Vercel Hobby functions.
+
 ## Project structure
 
 > **Note on Vercel's Hobby plan function limit:** Vercel's Hobby plan
@@ -488,7 +513,8 @@ patient-fundraiser/
 │                                    # so Vercel's build/bundling has no ESM/CommonJS ambiguity to resolve.
 │                                    # Also lists the "resend" package (Vercel runs `npm install` automatically).
 ├── index.html                      # Public homepage: KODEP header/logo, hero section, campaign
-│                                    # cards (5:6 photo, no border), "+ Add a Patient" button,
+│                                    # cards (5:6 photo, no border), Load more paging (24 at a time),
+│                                    # one-line filter/sort chip bar (client-side), Verified badge, "+ Add a Patient" button,
 │                                    # How It Works (4 steps), top right menu icon, and one
 │                                    # merged footer (links, contact info, copyright line)
 │                                    # (the FAQ now lives on faqs.html, not here)
@@ -496,7 +522,8 @@ patient-fundraiser/
 │                                    # /api/initialize-donation and redirects to Paystack's
 │                                    # hosted checkout (no PaystackPop / public key used here anymore);
 │                                    # live pre-payment fee breakdown; uncropped 5:6 detail photo
-├── submit-campaign.html            # Public visitor campaign submission form — patient info
+├── submit-campaign.html            # Public visitor campaign submission form (compresses the patient photo to
+│                                    # about 100 KB in the browser before upload) — patient info
 │                                    # + beneficiary/payout info + submitter contact info,
 │                                    # with a searchable bank field, two required consent
 │                                    # checkboxes (authorization + Privacy Policy/Terms),
@@ -517,13 +544,16 @@ patient-fundraiser/
 │   ├── login.html                    # Admin login form (not linked from any public page —
 │   │                                  # reached only by its direct URL)
 │   └── dashboard.html                # Campaigns (6 tabs incl. Pending Review and Rejected),
+│                                      # 50 per page with Load more, photo compression and
+│                                      # photo file size labels (red when over 100 KB),
+│                                      # Total amount settled card + Amount Settled column,
 │                                      # analytics, combined campaign+beneficiary creation form,
 │                                      # beneficiary/settlement UI (searchable bank field), Platform
 │                                      # Fee master switch, submitter contact info (admin-only column),
 │                                      # rejection-reason prompt on Reject, Copy Public Link on active
 │                                      # campaigns, responsive wrapping Actions column, uncropped
 │                                      # photo thumbnail + full-size lightbox on click
-├── images/                          # (empty) previously held a local fallback image;
+├── images/                          # (empty, kept with .gitkeep) previously held a local fallback image;
 │                                    # removed — see "No-photo placeholder" below
 ├── lib/
 │   ├── admin-auth.js                  # Shared login-session helper used by admin APIs
@@ -545,7 +575,8 @@ patient-fundraiser/
 │                                       # (submission received / approved / rejected) — server-side
 │                                       # only, RESEND_API_KEY never touches the browser
 ├── api/                              # 11 files total = 11 Vercel Serverless Functions
-│   ├── campaigns.js                   # Public: list active campaigns (+ search) — explicit column list
+│   ├── campaigns.js                   # Public: list active campaigns (+ search), 24 per page — explicit column list
+│                                   # (includes diagnosis for the homepage filter, beneficiary_verified flag)
 │   ├── campaign.js                    # Public: fetch one campaign by slug — explicit column list,
 │   │                                   # NEVER returns anything about beneficiaries/subaccounts;
 │   │                                   # also returns platform_fee_enabled/platform_fee_applicable
@@ -1030,6 +1061,10 @@ page).
 - **Sort** is Newest First (the server's order), Most Funded, Closest to
   Goal (achieved campaigns first, then highest percentage), Lowest Goal
   and Highest Goal.
+
+The space above the chips (below the search box) and the space below them
+(above the first campaign) are equal: 14 px up to 600 px wide and 18 px
+above that, set by one CSS variable, `--fs-gap`, in `index.html`.
 
 Filters combine, Sort then orders the matches, and Clear Filters (shown on
 the line under the chips while a filter is active) resets the four filters.
