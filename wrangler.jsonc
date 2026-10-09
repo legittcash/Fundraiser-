@@ -1,0 +1,25 @@
+{
+  // Cloudflare Worker + static assets for the KODEP fundraising platform.
+  // No secrets belong in this file — see README.md ("Environment variables
+  // and secrets") for how to set them with `wrangler secret put` or in the
+  // Cloudflare dashboard.
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "kodep-fundraiser",
+  "main": "src/index.js",
+  "compatibility_date": "2026-09-01",
+
+  // Static website (HTML/CSS/JS) lives in ./public. The Worker only runs
+  // first for /api/* — everything else is served straight from the assets.
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "run_worker_first": ["/api/*"]
+  },
+
+  // Keep any plain-text variables you set in the Cloudflare dashboard
+  // (e.g. SITE_URL) when deploying from this file. Secrets are never
+  // touched by a deploy.
+  "keep_vars": true,
+
+  "observability": { "enabled": true }
+}
