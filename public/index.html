@@ -1,0 +1,1180 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Patient Fundraising Campaigns</title>
+
+<style>
+  :root {
+    --pink: #ff2e88;
+    --pink-dark: #e0217a;
+    --navy: #14213d;
+    --green: #22c55e;
+    --bg: #f6f7fb;
+    --card-bg: #ffffff;
+    --text-dark: #1f2937;
+    --text-muted: #6b7280;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background: var(--bg);
+    min-height: 100vh;
+    padding: 24px 12px 60px;
+  }
+
+  .page-wrap {
+    max-width: 960px;
+    margin: 0 auto;
+  }
+
+  /* ==========================================================
+     ORGANIZATION HEADER — KODEP text logo, upper left, with the
+     organization name and location stacked beneath it. Pure CSS,
+     no image file, kept compact so the header never eats into
+     the campaign list below.
+     ========================================================== */
+  .site-header {
+    margin-bottom: 18px;
+  }
+
+  .kodep-logo-link {
+    display: inline-block;
+    text-decoration: none;
+  }
+
+  .kodep-logotype {
+    display: block;
+    font-size: 1.9rem;
+    font-weight: 800;
+    letter-spacing: 1.5px;
+    line-height: 1;
+  }
+  .kodep-logotype .logo-part-a { color: var(--pink); }
+  .kodep-logotype .logo-part-b { color: var(--navy); }
+
+  .kodep-org-name {
+    display: block;
+    font-size: 0.74rem;
+    font-weight: 700;
+    color: var(--text-dark);
+    letter-spacing: 0.2px;
+    margin-top: 3px;
+    max-width: 260px;
+    line-height: 1.3;
+  }
+
+  .kodep-org-location {
+    display: block;
+    font-size: 0.66rem;
+    color: var(--text-muted);
+    margin-top: 2px;
+  }
+
+  @media (max-width: 360px) {
+    .kodep-logotype { font-size: 1.6rem; }
+    .kodep-org-name { font-size: 0.68rem; max-width: 220px; }
+  }
+
+  .page-header {
+    text-align: center;
+    margin-bottom: 24px;
+  }
+
+  .page-header h1 {
+    color: var(--text-dark);
+    font-size: 1.6rem;
+    margin: 0 0 6px;
+  }
+
+  .page-header p {
+    color: var(--text-muted);
+    font-size: 0.95rem;
+    margin: 0;
+  }
+
+  .search-wrap {
+    max-width: 420px;
+    margin: 20px auto 30px;
+    position: relative;
+  }
+
+  .search-wrap input {
+    width: 100%;
+    padding: 13px 16px 13px 44px;
+    border: 1px solid #e5e7eb;
+    border-radius: 999px;
+    font-size: 1rem;
+    background: #fff;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.04);
+  }
+
+  .search-wrap-icon {
+    position: absolute;
+    left: 16px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 19px;
+    height: 19px;
+    color: #6b7280;
+    pointer-events: none;
+  }
+
+  /* ==========================================================
+     FILTER AND SORT BAR: small rounded chips, all in ONE line.
+     Everything inside is sized in em and the font size follows the
+     screen width, so the five chips always fit side by side, even on
+     small phones. A chip shows its name with a small solid arrow, then
+     the chosen value once something is picked (long values are cut
+     short with "..." rather than starting a new line). The real
+     dropdown sits invisibly over the chip, so the phone's own picker
+     opens on tap.
+     ========================================================== */
+  /* One shared gap: the space between the search box and the filters is
+     the same as the space between the filters and the first campaigns.
+     (The 30px is the search box's own bottom margin.) */
+  :root { --fs-gap: 14px; }
+  @media (min-width: 601px) { :root { --fs-gap: 18px; } }
+  .filter-bar {
+    display: flex;
+    flex-wrap: nowrap;
+    align-items: center;
+    gap: 0.3em;
+    margin: calc(var(--fs-gap) - 30px) 0 var(--fs-gap);
+    font-size: clamp(9px, 2.85vw, 12px);
+  }
+  .fs-chips { display: flex; flex-wrap: nowrap; gap: 0.3em; flex: 1 1 auto; min-width: 0; }
+  .fs-tools { display: flex; flex: 0 1 auto; min-width: 5.4em; max-width: 38%; }
+  .fs-chip {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.3em;
+    height: 2.5em;
+    padding: 0 0.45em;
+    min-width: 5.4em;
+    background: #fff;
+    border: 1px solid #d9dfe6;
+    border-radius: 0.85em;
+    color: var(--text-dark);
+    font-size: 1em;
+    font-weight: 500;
+    line-height: 1;
+    white-space: nowrap;
+  }
+  .fs-chips .fs-chip { flex: 1 1 auto; }
+  .fs-tools .fs-chip { flex: 1 1 auto; }
+  .fs-chip:hover { border-color: #aab4bf; }
+  .fs-chip:focus-within { outline: 2px solid var(--pink); outline-offset: 1px; }
+  .fs-chip.is-active { border-color: var(--pink); background: #fff7fb; color: var(--pink-dark); font-weight: 600; }
+  .fs-chip-text { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+  .fs-chip-text .short { display: none; }
+  @media (max-width: 440px) {
+    .fs-chip-text .full { display: none; }
+    .fs-chip-text .short { display: inline; }
+  }
+  .fs-caret {
+    flex: 0 0 auto;
+    width: 0;
+    height: 0;
+    border-left: 0.31em solid transparent;
+    border-right: 0.31em solid transparent;
+    border-top: 0.4em solid currentColor;
+  }
+  .fs-sort-icon { flex: 0 0 auto; width: 1.1em; height: 0.95em; }
+  .fs-select {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    margin: 0;
+    opacity: 0;
+    cursor: pointer;
+    font-size: 16px;
+    -webkit-appearance: none;
+    appearance: none;
+  }
+  /* Line under the chips, shown only while a filter or sort is active:
+     how many campaigns are showing, and the Clear Filters button. */
+  .filter-info { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; margin: calc(6px - var(--fs-gap)) 2px var(--fs-gap); }
+  .filter-info[hidden] { display: none; }
+  .filter-note { font-size: 0.72rem; color: var(--text-muted); margin: 0; line-height: 1.35; }
+  .fs-clear {
+    flex: 0 0 auto;
+    background: none;
+    border: none;
+    color: var(--pink-dark);
+    font-family: inherit;
+    font-size: 0.75rem;
+    font-weight: 700;
+    padding: 0;
+    line-height: 1.35;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .fs-clear[hidden] { display: none; }
+  .fs-clear:hover { text-decoration: underline; }
+  .filter-empty { grid-column: 1 / -1; text-align: center; padding: 26px 16px; }
+  .filter-empty p { margin: 0 0 12px; color: var(--text-muted); font-size: 0.95rem; }
+  .filter-empty .fs-clear-btn {
+    background: var(--pink);
+    color: #fff;
+    border: none;
+    border-radius: 999px;
+    font-family: inherit;
+    font-weight: 700;
+    font-size: 0.85rem;
+    padding: 10px 24px;
+    cursor: pointer;
+  }
+  @media (min-width: 601px) {
+    .filter-bar { font-size: 13px; gap: 8px; }
+    .fs-chips { gap: 8px; }
+    .fs-chip { height: 34px; padding: 0 12px; gap: 8px; border-radius: 10px; }
+    .fs-tools { max-width: 30%; }
+  }
+
+  /* ==========================================================
+     CAMPAIGN CARD GRID — compact, mobile-first, 2 columns by
+     default (marketplace/Jiji-style listing spirit), scaling up
+     to more columns as the screen gets wider.
+     ========================================================== */
+  .campaign-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 12px;
+  }
+
+  /* Tablet-ish widths: a little more room, so 3 columns fit comfortably */
+  @media (min-width: 640px) {
+    .campaign-grid {
+      grid-template-columns: repeat(3, 1fr);
+      gap: 16px;
+    }
+  }
+
+  /* Desktop-ish widths: 4 columns, same compact card design */
+  @media (min-width: 960px) {
+    .campaign-grid {
+      grid-template-columns: repeat(4, 1fr);
+    }
+  }
+
+  .campaign-card {
+    background: var(--card-bg);
+    border-radius: 14px;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.06);
+    overflow: hidden;
+    text-decoration: none;
+    color: inherit;
+    display: flex;
+    flex-direction: column;
+    transition: transform 0.15s ease, box-shadow 0.15s ease;
+    /* Lets the card shrink inside its grid cell instead of forcing the
+       grid wider — required for the text-truncation rules below to
+       actually work instead of overflowing the 2-column layout. */
+    min-width: 0;
+  }
+
+  .campaign-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 20px rgba(0, 0, 0, 0.1);
+  }
+
+  /* Patient portrait photo — consistent 5:6 portrait aspect ratio on
+     every card, regardless of the uploaded photo's original
+     dimensions. object-fit: cover fills the box without stretching or
+     distorting the photo (no squeezed/stretched faces); object-position
+     centers on the upper-middle of the frame, which is where a
+     portrait's face usually is, so cropping trims from the sides/
+     bottom rather than through the face whenever possible. */
+  .campaign-img {
+    width: 100%;
+    aspect-ratio: 5 / 6;
+    object-fit: cover;
+    object-position: center 20%;
+    background: #f0f0f3;
+    display: block;
+  }
+
+  .campaign-body {
+    padding: 10px 12px 12px;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+  }
+
+  /* Long patient names never break the compact card layout — they
+     truncate with an ellipsis instead of wrapping or overflowing. */
+  .campaign-name {
+    font-size: 0.92rem;
+    font-weight: 700;
+    color: var(--text-dark);
+    margin: 0 0 2px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  /* Public "Verified" badge: small pill under the patient name. Only
+     rendered when the API says beneficiary_verified is true. */
+  .verified-badge {
+    display: inline-block;
+    align-self: flex-start;
+    background: #ffe4f0;
+    color: var(--pink-dark);
+    font-size: 0.66rem;
+    font-weight: 700;
+    line-height: 1;
+    padding: 3px 7px;
+    border-radius: 999px;
+    margin: 0 0 4px;
+    white-space: nowrap;
+  }
+
+  /* Same protection for long hospital names. */
+  .campaign-hospital {
+    color: var(--text-muted);
+    font-size: 0.72rem;
+    margin-bottom: 8px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .campaign-stats-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    margin-bottom: 5px;
+    gap: 6px;
+  }
+
+  .campaign-amount {
+    font-weight: 700;
+    color: var(--text-dark);
+    font-size: 0.85rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .campaign-percent {
+    color: var(--green);
+    font-weight: 600;
+    font-size: 0.75rem;
+    white-space: nowrap;
+  }
+
+  .progress-track {
+    background: #e5e7eb;
+    border-radius: 999px;
+    height: 7px;
+    width: 100%;
+    overflow: hidden;
+    margin-bottom: 6px;
+  }
+
+  .progress-fill {
+    background: linear-gradient(90deg, #4ade80, var(--green));
+    height: 100%;
+    border-radius: 999px;
+    transition: width 0.8s ease-in-out;
+  }
+
+  .campaign-donors {
+    color: var(--text-muted);
+    font-size: 0.68rem;
+    margin-top: auto;
+    margin-bottom: 8px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .view-details-btn {
+    display: block;
+    text-align: center;
+    background: var(--pink);
+    color: #fff;
+    font-weight: 700;
+    font-size: 0.75rem;
+    padding: 7px;
+    border-radius: 8px;
+  }
+
+  .status-msg {
+    text-align: center;
+    color: var(--text-muted);
+    padding: 40px 20px;
+  }
+
+  .status-msg.error {
+    color: #dc2626;
+  }
+
+
+  /* ==========================================================
+     HOW IT WORKS — four numbered steps, 2 columns on phones,
+     4 columns from tablet width up. Kept compact on purpose.
+     ========================================================== */
+  .section-heading {
+    font-size: 1.25rem;
+    font-weight: 700;
+    color: var(--text-dark);
+    text-align: center;
+    margin: 0 0 22px;
+  }
+
+  .how-it-works { margin: 46px 0 10px; }
+
+  .steps-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 22px 16px;
+  }
+  @media (min-width: 640px) {
+    .steps-grid { grid-template-columns: repeat(4, 1fr); }
+  }
+
+  .step-item { text-align: center; }
+
+  .step-circle {
+    width: 30px;
+    height: 30px;
+    border-radius: 50%;
+    background: var(--pink);
+    color: #fff;
+    font-weight: 800;
+    font-size: 0.85rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin: 0 auto 8px;
+  }
+
+  .step-title {
+    font-size: 0.82rem;
+    font-weight: 700;
+    color: var(--text-dark);
+    margin: 0 0 5px;
+  }
+
+  .step-text {
+    font-size: 0.73rem;
+    line-height: 1.45;
+    color: var(--text-muted);
+    margin: 0;
+  }
+
+  /* "Load more" button under the campaign grid: same pink and pill shape
+     as the other buttons, outlined so it reads as secondary. */
+  .load-more-wrap { text-align: center; margin: 22px 0 6px; }
+  .load-more-wrap[hidden] { display: none; }
+  .load-more-btn {
+    background: #fff;
+    color: var(--pink-dark);
+    border: 2px solid var(--pink);
+    font-family: inherit;
+    font-weight: 700;
+    font-size: 0.88rem;
+    padding: 11px 30px;
+    border-radius: 999px;
+    cursor: pointer;
+  }
+  .load-more-btn:hover { background: #fdf0f6; }
+  .load-more-btn:disabled { opacity: 0.6; cursor: default; }
+
+  .start-fundraiser-btn {
+    display: block;
+    text-align: center;
+    background: var(--pink);
+    color: #fff;
+    font-weight: 700;
+    font-size: 0.92rem;
+    padding: 13px 20px;
+    border-radius: 999px;
+    text-decoration: none;
+    max-width: 320px;
+    margin: 0 auto 24px;
+    box-shadow: 0 4px 14px rgba(255, 46, 136, 0.25);
+  }
+
+  /* ==========================================================
+     TOP RIGHT MENU: icon only button, dropdown navigation panel
+     ========================================================== */
+  .header-row {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+    position: relative;
+  }
+  .menu-toggle {
+    position: relative;
+    flex-shrink: 0;
+    margin-top: -3px;
+    width: 36px;
+    height: 36px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #fff;
+    border: 1px solid #e5e7eb;
+    border-radius: 10px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+    color: var(--navy);
+    cursor: pointer;
+    padding: 0;
+  }
+  .menu-toggle:hover { color: var(--pink-dark); }
+  .menu-toggle:focus-visible { outline: 2px solid var(--pink); outline-offset: 2px; }
+  .menu-toggle::before { content: ""; position: absolute; inset: -6px; }
+  .menu-toggle svg { width: 20px; height: 20px; display: block; }
+  @media (max-width: 360px) { .menu-toggle { margin-top: -5px; } }
+  .menu-toggle .icon-close { display: none; }
+  .menu-toggle[aria-expanded="true"] .icon-open { display: none; }
+  .menu-toggle[aria-expanded="true"] .icon-close { display: block; }
+  .menu-toggle[aria-expanded="true"] { color: var(--pink-dark); border-color: var(--pink); }
+
+  .site-menu {
+    position: absolute;
+    top: 40px;
+    right: 0;
+    z-index: 50;
+    width: max-content;
+    max-width: calc(100vw - 24px);
+    background: #fff;
+    border-radius: 14px;
+    box-shadow: 0 10px 30px rgba(20, 33, 61, 0.16);
+    padding: 8px;
+  }
+  .site-menu[hidden] { display: none; }
+  .site-menu a {
+    display: block;
+    padding: 14px 16px;
+    border-radius: 10px;
+    color: var(--text-dark);
+    font-size: 0.98rem;
+    font-weight: 600;
+    text-decoration: none;
+  }
+  .site-menu a:hover, .site-menu a:focus-visible { background: #fdf0f6; color: var(--pink-dark); outline: none; }
+  .site-menu a[aria-current="page"] { color: var(--pink-dark); }
+
+  /* ==========================================================
+     FOOTER: links, contact block and copyright in one footer.
+     Links read top to bottom in two left aligned columns.
+     ========================================================== */
+  .site-footer {
+    display: block;
+    text-align: center;
+    margin-top: 40px;
+    padding-top: 20px;
+    border-top: 1px solid #e5e7eb;
+    font-size: 0.8rem;
+    color: var(--text-muted);
+  }
+  .site-footer a { color: var(--text-muted); text-decoration: none; }
+  .site-footer a:hover { color: var(--pink-dark); text-decoration: underline; }
+  .site-footer .footer-links {
+    text-align: left;
+    list-style: none;
+    margin: 0 auto;
+    padding: 0;
+    display: grid;
+    grid-template-rows: repeat(2, auto);
+    grid-auto-flow: column;
+    grid-template-columns: repeat(3, max-content);
+    justify-content: center;
+    gap: 12px 28px;
+  }
+  .site-footer .footer-faq { margin-top: 14px; }
+  .site-footer .footer-contact {
+    margin-top: 22px;
+    font-size: 0.76rem;
+    color: var(--text-muted);
+    line-height: 1.7;
+  }
+  .site-footer .footer-copyright {
+    margin-top: 10px;
+    font-size: 0.75rem;
+    color: var(--text-muted);
+  }
+</style>
+</head>
+<body>
+
+<div class="page-wrap">
+  <header class="site-header">
+    <div class="header-row">
+      <a class="kodep-logo-link" href="index.html" aria-label="KODEP home">
+        <span class="kodep-logotype"><span class="logo-part-a">KOD</span><span class="logo-part-b">EP</span></span>
+        <span class="kodep-org-name">Kidney and Other Disease Eradication Program</span>
+        <span class="kodep-org-location">Enugu State, Nigeria</span>
+      </a>
+      <button type="button" class="menu-toggle" id="menuToggle" aria-label="Open navigation menu" aria-expanded="false" aria-controls="siteMenu">
+        <svg class="icon-open" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><line x1="4" y1="6" x2="20" y2="6"></line><line x1="4" y1="12" x2="20" y2="12"></line><line x1="4" y1="18" x2="20" y2="18"></line></svg>
+        <svg class="icon-close" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><line x1="6" y1="6" x2="18" y2="18"></line><line x1="18" y1="6" x2="6" y2="18"></line></svg>
+      </button>
+      <nav class="site-menu" id="siteMenu" aria-label="Main navigation" hidden>
+        <a href="about-us.html">About Us</a>
+        <a href="contact-us.html">Contact Us</a>
+        <a href="our-mission.html">Our Mission</a>
+        <a href="our-vision.html">Our Vision</a>
+        <a href="faqs.html">FAQs</a>
+      </nav>
+    </div>
+  </header>
+
+  <div class="page-header">
+    <h1>Support Patients in Need</h1>
+    <p>Help patients raise funds for critical medical treatment.</p>
+  </div>
+
+  <a class="start-fundraiser-btn" href="submit-campaign.html">+ Add a Patient</a>
+
+  <!-- Search box: filters campaigns by patient name -->
+  <div class="search-wrap">
+    <svg class="search-wrap-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <circle cx="11" cy="11" r="7"></circle>
+      <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+    </svg>
+    <input type="text" id="searchInput" placeholder="Search patients by name..." />
+  </div>
+
+  <!-- Filter and sort bar: works on the campaigns already loaded, in the
+       browser only. No extra request is made when a choice changes. -->
+  <div class="filter-bar" id="filterBar" role="group" aria-label="Filter and sort campaigns">
+    <div class="fs-chips">
+      <label class="fs-chip" data-label="Diagnosis">
+        <span class="fs-chip-text" aria-hidden="true">Diagnosis</span><span class="fs-caret" aria-hidden="true"></span>
+        <select class="fs-select" id="filterDiagnosis" aria-label="Diagnosis">
+        <option value="all">All Diagnoses</option>
+        <option value="kidney_disease">Kidney Disease</option>
+        <option value="kidney_failure">Kidney Failure</option>
+        <option value="kidney_transplant">Kidney Transplant</option>
+        <option value="cancer">Cancer</option>
+        <option value="heart">Heart Disease</option>
+        <option value="liver">Liver Disease</option>
+        <option value="neuro">Neurological Conditions</option>
+        <option value="other">Other Medical Conditions</option>
+      </select>
+      </label>
+      <label class="fs-chip" data-label="Hospital">
+        <span class="fs-chip-text" aria-hidden="true">Hospital</span><span class="fs-caret" aria-hidden="true"></span>
+        <select class="fs-select" id="filterHospital" aria-label="Hospital">
+        <option value="all">All Hospitals</option>
+      </select>
+      </label>
+      <label class="fs-chip" data-label="Verified">
+        <span class="fs-chip-text" aria-hidden="true">Verified</span><span class="fs-caret" aria-hidden="true"></span>
+        <select class="fs-select" id="filterVerified" aria-label="Verified">
+        <option value="all">All Patients</option>
+        <option value="verified">Verified Patients</option>
+      </select>
+      </label>
+      <label class="fs-chip" data-label="Funding Progress" data-short="Funding">
+        <span class="fs-chip-text" aria-hidden="true">Funding Progress</span><span class="fs-caret" aria-hidden="true"></span>
+        <select class="fs-select" id="filterProgress" aria-label="Funding Progress">
+        <option value="all">All Campaigns</option>
+        <option value="lt25">Less than 25% funded</option>
+        <option value="25-50">25%–50% funded</option>
+        <option value="50-75">50%–75% funded</option>
+        <option value="75-99">75%–99% funded</option>
+        <option value="achieved">Goal Achieved</option>
+      </select>
+      </label>
+    </div>
+    <div class="fs-tools">
+      <label class="fs-chip fs-sort" data-label="Sort">
+        <svg class="fs-sort-icon" viewBox="0 0 13 11" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><line x1="1" y1="1.5" x2="12" y2="1.5"></line><line x1="1" y1="5.5" x2="9" y2="5.5"></line><line x1="1" y1="9.5" x2="5.5" y2="9.5"></line></svg>
+        <span class="fs-chip-text" aria-hidden="true">Sort</span><span class="fs-caret" aria-hidden="true"></span>
+        <select class="fs-select" id="sortSelect" aria-label="Sort">
+        <option value="newest">Newest First</option>
+        <option value="most_funded">Most Funded</option>
+        <option value="closest">Closest to Goal</option>
+        <option value="lowest_goal">Lowest Goal</option>
+        <option value="highest_goal">Highest Goal</option>
+      </select>
+      </label>
+    </div>
+  </div>
+  <div class="filter-info" id="filterInfo" hidden>
+    <p class="filter-note" id="filterNote" aria-live="polite"></p>
+    <button type="button" class="fs-clear" id="clearFiltersBtn" hidden>Clear Filters</button>
+  </div>
+
+  <div class="campaign-grid" id="campaignGrid">
+    <p class="status-msg">Loading campaigns...</p>
+  </div>
+
+  <!-- "Load more": shown only when another page of campaigns exists -->
+  <div class="load-more-wrap" id="loadMoreWrap" hidden>
+    <button type="button" class="load-more-btn" id="loadMoreBtn">Load more</button>
+  </div>
+
+  <!-- ============== HOW IT WORKS ============== -->
+  <section class="how-it-works" aria-labelledby="howItWorksHeading">
+    <h2 id="howItWorksHeading" class="section-heading">How It Works</h2>
+    <div class="steps-grid">
+      <div class="step-item">
+        <div class="step-circle">1</div>
+        <h3 class="step-title">Find a Patient</h3>
+        <p class="step-text">Browse the campaigns and search for a patient you want to support.</p>
+      </div>
+      <div class="step-item">
+        <div class="step-circle">2</div>
+        <h3 class="step-title">View Their Story</h3>
+        <p class="step-text">Open "View Details" to see the patient's story, fundraising goal, and other campaign information.</p>
+      </div>
+      <div class="step-item">
+        <div class="step-circle">3</div>
+        <h3 class="step-title">Make a Donation</h3>
+        <p class="step-text">Choose the amount you want to donate and complete the payment securely through the available payment system.</p>
+      </div>
+      <div class="step-item">
+        <div class="step-circle">4</div>
+        <h3 class="step-title">Help Make a Difference</h3>
+        <p class="step-text">Your donation contributes toward the patient's fundraising campaign and helps support their medical treatment.</p>
+      </div>
+    </div>
+  </section>
+
+  <footer class="site-footer">
+    <ul class="footer-links" aria-label="Footer links">
+      <li><a href="about-us.html">About Us</a></li>
+      <li><a href="contact-us.html">Contact Us</a></li>
+      <li><a href="our-mission.html">Our Mission</a></li>
+      <li><a href="our-vision.html">Our Vision</a></li>
+      <li><a href="privacy-policy.html">Privacy Policy</a></li>
+      <li><a href="terms.html">Terms of Service</a></li>
+    </ul>
+    <div class="footer-faq"><a href="faqs.html">FAQs</a></div>
+    <div class="footer-contact">
+      KODEP, Kidney and Other Disease Eradication Program, Enugu State, Nigeria<br />
+      <a href="mailto:ojinwayoo@gmail.com">ojinwayoo@gmail.com</a><br />
+      <a href="tel:+2348062842257">08062842257</a>
+    </div>
+    <div class="footer-copyright">&copy; <span id="footerYear">2026</span> KODEP. All rights reserved.</div>
+  </footer>
+</div>
+
+<script>
+  /*
+    =========================================================
+    LOAD ALL ACTIVE CAMPAIGNS FROM THE BACKEND
+    =========================================================
+    This calls our own serverless function at /api/campaigns,
+    which reads the campaigns marked "active" from Supabase, one
+    page at a time (the "Load more" button fetches the next page),
+    and returns them as JSON. We turn each one into a clickable
+    card that links to campaign.html?slug=<their-slug>.
+  */
+  const campaignGrid = document.getElementById('campaignGrid');
+
+  // Neutral "no photo" placeholder for the rare case a campaign record
+  // has no image_url at all (a patient photo is required for every new
+  // submission — see submit-campaign.html — so this only matters for
+  // an older pre-existing record). A plain inline SVG icon, not a
+  // photo of any person, so nothing personal is ever shown here and no
+  // extra image file needs to exist in this project.
+  const NO_PHOTO_PLACEHOLDER =
+    "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 240'%3E%3Crect width='200' height='240' fill='%23f0f0f3'/%3E%3Ccircle cx='75' cy='78' r='18' fill='%23d1d5db'/%3E%3Cpath d='M20 200 L80 130 L120 165 L150 118 L190 200 Z' fill='%23d1d5db'/%3E%3C/svg%3E";
+  const searchInput = document.getElementById('searchInput');
+
+  const loadMoreWrap = document.getElementById('loadMoreWrap');
+  const loadMoreBtn = document.getElementById('loadMoreBtn');
+
+  let searchDebounceTimer = null;
+
+  // Paging state for the "Load more" button. loadToken lets us ignore a
+  // slow response that belongs to an earlier search, and shownIds stops
+  // a campaign appearing twice if new ones are added while someone is
+  // browsing (which shifts the page boundaries).
+  let currentSearch = '';
+  let currentPage = 1;
+  let loadToken = 0;
+  let shownIds = new Set();
+
+  // Every campaign loaded so far, in the order the server sent them
+  // (newest first). The filter bar works on this list in the browser.
+  let allCampaigns = [];
+
+  function pageUrl(search, page) {
+    let url = `/api/campaigns?page=${page}`;
+    if (search) url += `&search=${encodeURIComponent(search)}`;
+    return url;
+  }
+
+  async function loadCampaigns(search = '') {
+    const token = ++loadToken;
+    currentSearch = search;
+    currentPage = 1;
+    shownIds = new Set();
+    loadMoreWrap.hidden = true;
+    loadMoreBtn.disabled = false;
+    loadMoreBtn.textContent = 'Load more';
+    try {
+      const res = await fetch(pageUrl(search, 1));
+      const data = await res.json();
+      if (token !== loadToken) return; // a newer search replaced this one
+      const campaigns = data.campaigns || [];
+      campaigns.forEach((c) => shownIds.add(c.id));
+      allCampaigns = campaigns;
+      loadMoreWrap.hidden = !(data.has_more === true);
+      renderCampaigns();
+    } catch (err) {
+      if (token !== loadToken) return;
+      console.error('Failed to load campaigns:', err);
+      campaignGrid.innerHTML = '<p class="status-msg error">Could not load campaigns right now. Please try again shortly.</p>';
+    }
+  }
+
+  async function loadMoreCampaigns() {
+    const token = loadToken;
+    loadMoreBtn.disabled = true;
+    loadMoreBtn.textContent = 'Loading...';
+    try {
+      const res = await fetch(pageUrl(currentSearch, currentPage + 1));
+      const data = await res.json();
+      if (token !== loadToken) return; // search changed while loading
+      if (!res.ok) throw new Error(data.error || 'Request failed');
+      const fresh = (data.campaigns || []).filter((c) => !shownIds.has(c.id));
+      fresh.forEach((c) => shownIds.add(c.id));
+      allCampaigns = allCampaigns.concat(fresh);
+      currentPage += 1;
+      loadMoreWrap.hidden = !(data.has_more === true);
+      renderCampaigns();
+    } catch (err) {
+      if (token !== loadToken) return;
+      console.error('Failed to load more campaigns:', err);
+      loadMoreBtn.textContent = 'Could not load. Tap to try again';
+    } finally {
+      if (token === loadToken) {
+        loadMoreBtn.disabled = false;
+        if (loadMoreBtn.textContent === 'Loading...') loadMoreBtn.textContent = 'Load more';
+      }
+    }
+  }
+
+  loadMoreBtn.addEventListener('click', loadMoreCampaigns);
+
+  /*
+    =========================================================
+    FILTERS AND SORTING (browser only)
+    =========================================================
+    Works on the campaigns already loaded by the existing
+    /api/campaigns request. Nothing here calls the server.
+    Filters combine (a campaign must match all of them) and
+    the sort then orders whatever remains.
+  */
+  const filterEls = {
+    diagnosis: document.getElementById('filterDiagnosis'),
+    hospital: document.getElementById('filterHospital'),
+    verified: document.getElementById('filterVerified'),
+    progress: document.getElementById('filterProgress'),
+  };
+  const sortEl = document.getElementById('sortSelect');
+  const clearFiltersBtn = document.getElementById('clearFiltersBtn');
+  const filterNote = document.getElementById('filterNote');
+
+  const FILTER_DEFAULT = 'all';
+
+  // Diagnosis is free text typed when a campaign is submitted, so each
+  // option matches by keyword. Nothing is changed or stored: the text
+  // each campaign already has is only read. "Kidney Disease" is the broad
+  // kidney group, so it also includes kidney failure and kidney transplant
+  // campaigns. A campaign may match more than one option. "Other" is a
+  // diagnosis that matches none of the listed groups. A campaign with no
+  // diagnosis text appears only under "All Diagnoses".
+  const KIDNEY_RE = /kidney|renal|nephr|dialysis|\bckd\b|\besrd\b/;
+  const DIAGNOSIS_RULES = {
+    kidney_disease: KIDNEY_RE,
+    kidney_failure: /(kidney|renal)\W+(\w+\W+){0,3}(failure|failing)|failure of (the )?(kidney|renal)|end[- ]stage|dialysis|\besrd\b/,
+    kidney_transplant: /(kidney|renal).{0,25}transplant|transplant.{0,25}(kidney|renal)/,
+    cancer: /cancer|carcinoma|leuk(a)?emia|lymphoma|tumou?r|sarcoma|melanoma|myeloma|oncolog|neoplasm|malignan/,
+    heart: /heart|cardi|coronary|myocard|arrhythm|angina|atrial|ventricul/,
+    liver: /liver|hepat|cirrhosis|biliary/,
+    neuro: /neuro|brain|stroke|epilep|seizure|parkinson|alzheimer|dementia|sclerosis|spinal|cerebral|palsy|paraly|meningi|hydroceph/,
+  };
+
+  function diagnosisMatches(campaign, key) {
+    const text = String(campaign.diagnosis || '').toLowerCase().trim();
+    if (!text) return false;
+    if (key === 'other') {
+      return !Object.values(DIAGNOSIS_RULES).some((re) => re.test(text));
+    }
+    return DIAGNOSIS_RULES[key] ? DIAGNOSIS_RULES[key].test(text) : false;
+  }
+
+  // Hospitals are compared ignoring capital letters and extra spaces, so
+  // "UNTH" and "unth " count as one hospital. The name shown is the one
+  // first returned by the server, unchanged.
+  function hospitalKey(name) {
+    return String(name || '').trim().replace(/\s+/g, ' ').toLowerCase();
+  }
+
+  function fundingPercent(c) {
+    const goal = Number(c.goal_amount) || 0;
+    const raised = Number(c.raised_amount) || 0;
+    return goal > 0 ? (raised / goal) * 100 : 0;
+  }
+
+  function goalReached(c) {
+    const goal = Number(c.goal_amount) || 0;
+    return goal > 0 && (Number(c.raised_amount) || 0) >= goal;
+  }
+
+  function progressMatches(c, key) {
+    const p = fundingPercent(c);
+    switch (key) {
+      case 'lt25': return p < 25;
+      case '25-50': return p >= 25 && p < 50;
+      case '50-75': return p >= 50 && p < 75;
+      case '75-99': return p >= 75 && !goalReached(c) && p < 100;
+      case 'achieved': return goalReached(c);
+      default: return true;
+    }
+  }
+
+  function filtersAreActive() {
+    return Object.values(filterEls).some((el) => el.value !== FILTER_DEFAULT);
+  }
+
+  function campaignMatchesFilters(c) {
+    if (filterEls.diagnosis.value !== FILTER_DEFAULT && !diagnosisMatches(c, filterEls.diagnosis.value)) return false;
+    if (filterEls.hospital.value !== FILTER_DEFAULT && hospitalKey(c.hospital) !== filterEls.hospital.value) return false;
+    if (filterEls.verified.value === 'verified' && c.beneficiary_verified !== true) return false;
+    if (!progressMatches(c, filterEls.progress.value)) return false;
+    return true;
+  }
+
+  function sortCampaigns(items) {
+    // Each item keeps its original position so equal values stay in the
+    // server's newest first order.
+    const indexed = items.map((c, i) => ({ c, i }));
+    const byOrder = (a, b) => a.i - b.i;
+    const num = (v) => Number(v) || 0;
+    switch (sortEl.value) {
+      case 'most_funded':
+        indexed.sort((a, b) => num(b.c.raised_amount) - num(a.c.raised_amount) || byOrder(a, b));
+        break;
+      case 'closest':
+        indexed.sort((a, b) =>
+          (goalReached(b.c) - goalReached(a.c)) ||
+          (fundingPercent(b.c) - fundingPercent(a.c)) ||
+          byOrder(a, b));
+        break;
+      case 'lowest_goal':
+        indexed.sort((a, b) => num(a.c.goal_amount) - num(b.c.goal_amount) || byOrder(a, b));
+        break;
+      case 'highest_goal':
+        indexed.sort((a, b) => num(b.c.goal_amount) - num(a.c.goal_amount) || byOrder(a, b));
+        break;
+      default:
+        indexed.sort(byOrder);
+    }
+    return indexed.map((x) => x.c);
+  }
+
+  // The hospital dropdown is built from the campaigns already loaded.
+  // The chosen hospital stays in the list even if a new search no longer
+  // contains it, so the dropdown never shows a wrong value.
+  const hospitalLabels = new Map();
+  let hospitalOptionsSignature = '';
+
+  function refreshHospitalOptions() {
+    const seen = new Map();
+    allCampaigns.forEach((c) => {
+      const key = hospitalKey(c.hospital);
+      if (key && !seen.has(key)) seen.set(key, String(c.hospital).trim());
+    });
+    seen.forEach((label, key) => { if (!hospitalLabels.has(key)) hospitalLabels.set(key, label); });
+    const selected = filterEls.hospital.value;
+    if (selected !== FILTER_DEFAULT && !seen.has(selected) && hospitalLabels.has(selected)) {
+      seen.set(selected, hospitalLabels.get(selected));
+    }
+    const entries = [...seen.entries()].sort((a, b) => a[1].localeCompare(b[1]));
+    const signature = entries.map((e) => e[0]).join('|');
+    if (signature === hospitalOptionsSignature) return;
+    hospitalOptionsSignature = signature;
+    const select = filterEls.hospital;
+    select.innerHTML = '';
+    const all = document.createElement('option');
+    all.value = FILTER_DEFAULT;
+    all.textContent = 'All Hospitals';
+    select.appendChild(all);
+    entries.forEach(([key, label]) => {
+      const opt = document.createElement('option');
+      opt.value = key;
+      opt.textContent = label;
+      select.appendChild(opt);
+    });
+    select.value = seen.has(selected) ? selected : FILTER_DEFAULT;
+  }
+
+  // A chip shows its name until something is picked, then the picked value.
+  function updateChip(select, defaultValue) {
+    const chip = select.closest('.fs-chip');
+    const text = chip.querySelector('.fs-chip-text');
+    const active = select.value !== defaultValue;
+    chip.classList.toggle('is-active', active);
+    if (active) {
+      text.textContent = select.options[select.selectedIndex].text;
+    } else if (chip.dataset.short) {
+      text.innerHTML = '<span class="full"></span><span class="short"></span>';
+      text.firstChild.textContent = chip.dataset.label;
+      text.lastChild.textContent = chip.dataset.short;
+    } else {
+      text.textContent = chip.dataset.label;
+    }
+  }
+
+  function updateFilterUi(visibleCount) {
+    Object.values(filterEls).forEach((el) => updateChip(el, FILTER_DEFAULT));
+    updateChip(sortEl, 'newest');
+    const active = filtersAreActive();
+    clearFiltersBtn.hidden = !active;
+
+    // The lists only hold the campaigns loaded so far, so say so while
+    // more pages are still waiting behind "Load more".
+    const moreWaiting = !loadMoreWrap.hidden;
+    let note = '';
+    if (active) {
+      note = 'Showing ' + visibleCount + ' of ' + allCampaigns.length + ' loaded.';
+      if (moreWaiting) note += ' Filters cover loaded campaigns only; tap Load more for more.';
+    } else if (sortEl.value !== 'newest' && moreWaiting) {
+      note = 'Sorting covers loaded campaigns only; tap Load more for more.';
+    }
+    filterNote.textContent = note;
+    document.getElementById('filterInfo').hidden = !note;
+  }
+
+  function clearFilters() {
+    Object.values(filterEls).forEach((el) => { el.value = FILTER_DEFAULT; });
+    renderCampaigns();
+  }
+
+  Object.values(filterEls).forEach((el) => el.addEventListener('change', renderCampaigns));
+  sortEl.addEventListener('change', renderCampaigns);
+  clearFiltersBtn.addEventListener('click', clearFilters);
+  Object.values(filterEls).forEach((el) => updateChip(el, FILTER_DEFAULT));
+  updateChip(sortEl, 'newest');
+  campaignGrid.addEventListener('click', (e) => {
+    if (e.target.closest('[data-clear-filters]')) clearFilters();
+  });
+
+  function renderCampaigns() {
+    refreshHospitalOptions();
+    const visible = sortCampaigns(allCampaigns.filter(campaignMatchesFilters));
+    updateFilterUi(visible.length);
+
+    if (allCampaigns.length === 0) {
+      campaignGrid.innerHTML = '<p class="status-msg">No campaigns found.</p>';
+      return;
+    }
+    if (visible.length === 0) {
+      campaignGrid.innerHTML =
+        '<div class="filter-empty"><p>No patients match your selected filters.</p>' +
+        '<button type="button" class="fs-clear-btn" data-clear-filters>Clear Filters</button></div>';
+      return;
+    }
+
+    campaignGrid.innerHTML = visible.map(campaignCardHtml).join('');
+  }
+
+  function campaignCardHtml(campaign) {
+    const raised = Number(campaign.raised_amount) || 0;
+    const goal = Number(campaign.goal_amount) || 1;
+    const donors = Number(campaign.donor_count) || 0;
+    const percent = Math.min(100, Math.round((raised / goal) * 100));
+    const imageUrl = campaign.image_url || NO_PHOTO_PLACEHOLDER;
+
+    return `
+      <a class="campaign-card" href="campaign.html?slug=${encodeURIComponent(campaign.slug)}">
+        <img class="campaign-img" src="${escapeHtml(imageUrl)}" alt="${escapeHtml(campaign.patient_name)}" />
+        <div class="campaign-body">
+          <div class="campaign-name">${escapeHtml(campaign.patient_name)}</div>
+          ${campaign.beneficiary_verified === true ? '<span class="verified-badge">✓ Verified</span>' : ''}
+          ${campaign.hospital ? `<div class="campaign-hospital">🏥 ${escapeHtml(campaign.hospital)}</div>` : ''}
+
+          <div class="campaign-stats-row">
+            <span class="campaign-amount">₦${raised.toLocaleString()}</span>
+            <span class="campaign-percent">${percent}%</span>
+          </div>
+          <div class="progress-track">
+            <div class="progress-fill" style="width: ${percent}%;"></div>
+          </div>
+          <div class="campaign-donors">${donors} donor${donors === 1 ? '' : 's'} · Goal ₦${goal.toLocaleString()}</div>
+          <span class="view-details-btn">View Details →</span>
+        </div>
+      </a>
+    `;
+  }
+
+  // Basic HTML-escaping so patient-entered text (name, hospital) can
+  // never break the page layout or inject scripts.
+  function escapeHtml(str) {
+    const div = document.createElement('div');
+    div.textContent = str ?? '';
+    return div.innerHTML;
+  }
+
+  // Load everything as soon as the page opens
+  loadCampaigns();
+
+  // Debounce the search box so we're not firing a request on every
+  // single keystroke — wait 300ms after the visitor stops typing.
+  searchInput.addEventListener('input', () => {
+    clearTimeout(searchDebounceTimer);
+    searchDebounceTimer = setTimeout(() => {
+      loadCampaigns(searchInput.value.trim());
+    }, 300);
+  });
+</script>
+
+<!-- Footer copyright year — tiny, isolated, self-contained. Keeps the
+     "© YYYY KODEP" line correct without ever needing a manual edit. -->
+<script>
+  (function () {
+    const yearEl = document.getElementById('footerYear');
+    if (yearEl) yearEl.textContent = new Date().getFullYear();
+  })();
+</script>
+
+<script>
+  /* Top right menu: open and close, close on link tap, outside tap, or Escape.
+     Self contained; touches nothing except the menu elements. */
+  (function () {
+    const toggle = document.getElementById('menuToggle');
+    const menu = document.getElementById('siteMenu');
+    if (!toggle || !menu) return;
+
+    function setOpen(open) {
+      menu.hidden = !open;
+      toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+      toggle.setAttribute('aria-label', open ? 'Close navigation menu' : 'Open navigation menu');
+    }
+    toggle.addEventListener('click', (e) => {
+      e.stopPropagation();
+      setOpen(menu.hidden);
+    });
+    menu.querySelectorAll('a').forEach((a) => a.addEventListener('click', () => setOpen(false)));
+    document.addEventListener('click', (e) => {
+      if (!menu.hidden && !menu.contains(e.target)) setOpen(false);
+    });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && !menu.hidden) { setOpen(false); toggle.focus(); }
+    });
+  })();
+</script>
+
+</body>
+</html>
