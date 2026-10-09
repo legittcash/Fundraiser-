@@ -37,13 +37,14 @@
 import { rejectIfNotAdmin } from '../../lib/admin-auth.js';
 import { listNigerianBanks, resolveAccountNumber, createSubaccount } from '../../lib/paystack.js';
 import { fetchAllRows } from '../../lib/supabase-paging.js';
+import { jsonResponse } from '../../lib/http.js';
 
 const PLATFORM_FEE_RATE_PERCENT = 1;
 const PLATFORM_FEE_CAP_NAIRA = 1000;
 
-function getSupabaseConfig() {
-  const SUPABASE_URL = (process.env.SUPABASE_URL || '').replace(/\/+$/, '');
-  const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+function getSupabaseConfig(env) {
+  const SUPABASE_URL = (env.SUPABASE_URL || '').replace(/\/+$/, '');
+  const SUPABASE_SERVICE_ROLE_KEY = env.SUPABASE_SERVICE_ROLE_KEY;
   return { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY };
 }
 
@@ -67,34 +68,32 @@ function maskAccountNumber(accountNumber) {
 // =========================================================================
 // route=banks — from the original api/admin/banks.js
 // =========================================================================
-async function handleBanks(req, res) {
+async function handleBanks(req, env) {
   if (req.method !== 'GET') {
-    res.setHeader('Allow', ['GET']);
-    return res.status(405).json({ error: 'Method not allowed' });
+    return jsonResponse(405, { error: 'Method not allowed' }, { Allow: 'GET' });
   }
-  const result = await listNigerianBanks();
+  const result = await listNigerianBanks(env);
   if (!result.ok) {
-    return res.status(502).json({ error: result.error });
+    return jsonResponse(502, { error: result.error });
   }
-  return res.status(200).json({ banks: result.data });
+  return jsonResponse(200, { banks: result.data });
 }
 
 // =========================================================================
 // route=verify — from the original api/admin/verify-beneficiary.js
 // =========================================================================
-async function handleVerify(req, res, { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY }) {
+async function handleVerify(req, env, { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY }) {
   if (req.method !== 'POST') {
-    res.setHeader('Allow', ['POST']);
-    return res.status(405).json({ error: 'Method not allowed' });
+    return jsonResponse(405, { error: 'Method not allowed' }, { Allow: 'POST' });
   }
-  if (!process.env.PAYSTACK_SECRET_KEY) {
-    return res.status(500).json({ error: 'Server is missing PAYSTACK_SECRET_KEY.' });
+  if (!env.PAYSTACK_SECRET_KEY) {
+    return jsonResponse(500, { error: 'Server is missing PAYSTACK_SECRET_KEY.' });
   }
 
   const headers = supabaseHeaders(SUPABASE_SERVICE_ROLE_KEY);
   const fundraiserId = (req.body || {}).fundraiser_id;
   if (!fundraiserId) {
-    return res.status(400).json({ error: 'fundraiser_id is required.' });
+    return jsonResponse(400, { error: 'fundraiser_id is required.' });
   }
 
   try {
@@ -104,19 +103,19 @@ async function handleVerify(req, res, { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY 
     );
     if (!beneficiaryRes.ok) {
       console.error('Supabase error:', await beneficiaryRes.text());
-      return res.status(500).json({ error: 'Failed to load beneficiary.' });
+      return jsonResponse(500, { error: 'Failed to load beneficiary.' });
     }
     const rows = await beneficiaryRes.json();
     const beneficiary = rows[0];
     if (!beneficiary) {
-      return res.status(404).json({ error: 'No beneficiary is on file for this campaign yet. Add one first.' });
+      return jsonResponse(404, { error: 'No beneficiary is on file for this campaign yet. Add one first.' });
     }
     if (!beneficiary.bank_code || !beneficiary.account_number) {
-      return res.status(400).json({ error: 'Beneficiary is missing a bank or account number.' });
+      return jsonResponse(400, { error: 'Beneficiary is missing a bank or account number.' });
     }
 
     // ---- STEP 1: Resolve/verify the account number with Paystack ----
-    const resolveResult = await resolveAccountNumber(beneficiary.account_number, beneficiary.bank_code);
+    const resolveResult = await resolveAccountNumber(env, beneficiary.account_number, beneficiary.bank_code);
 
     if (!resolveResult.ok) {
       // Mark verification as failed so the admin sees an honest status,
@@ -126,13 +125,13 @@ async function handleVerify(req, res, { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY 
         headers,
         body: JSON.stringify({ verification_status: 'failed', updated_at: new Date().toISOString() }),
       });
-      return res.status(422).json({ error: `Account verification failed: ${resolveResult.error}` });
+      return jsonResponse(422, { error: `Account verification failed: ${resolveResult.error}` });
     }
 
     // ---- STEP 2: Create the Paystack subaccount, if one doesn't exist ----
     let subaccountCode = beneficiary.paystack_subaccount_code;
     if (!subaccountCode) {
-      const subaccountResult = await createSubaccount({
+      const subaccountResult = await createSubaccount(env, {
         businessName: beneficiary.beneficiary_name,
         bankCode: beneficiary.bank_code,
         accountNumber: beneficiary.account_number,
@@ -146,7 +145,7 @@ async function handleVerify(req, res, { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY 
           headers,
           body: JSON.stringify({ verification_status: 'failed', updated_at: new Date().toISOString() }),
         });
-        return res.status(502).json({ error: `Could not set up settlement: ${subaccountResult.error}` });
+        return jsonResponse(502, { error: `Could not set up settlement: ${subaccountResult.error}` });
       }
 
       subaccountCode = subaccountResult.data.subaccount_code;
@@ -164,7 +163,7 @@ async function handleVerify(req, res, { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY 
           account_name: resolveResult.data.account_name,
           paystack_subaccount_code: subaccountCode,
           verified_at: new Date().toISOString(),
-          verified_by: process.env.ADMIN_USERNAME || 'admin',
+          verified_by: env.ADMIN_USERNAME || 'admin',
           updated_at: new Date().toISOString(),
         }),
       }
@@ -172,29 +171,28 @@ async function handleVerify(req, res, { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY 
 
     if (!updateRes.ok) {
       console.error('Supabase error:', await updateRes.text());
-      return res.status(500).json({ error: 'Verification succeeded with Paystack, but saving the result failed. Please try again.' });
+      return jsonResponse(500, { error: 'Verification succeeded with Paystack, but saving the result failed. Please try again.' });
     }
 
     const updated = await updateRes.json();
-    return res.status(200).json({ beneficiary: updated[0] });
+    return jsonResponse(200, { beneficiary: updated[0] });
   } catch (err) {
     console.error('Unexpected error verifying beneficiary:', err);
-    return res.status(500).json({ error: 'Unexpected server error.' });
+    return jsonResponse(500, { error: 'Unexpected server error.' });
   }
 }
 
 // =========================================================================
 // route=settlement — from the original api/admin/settlement.js
 // =========================================================================
-async function handleSettlement(req, res, { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY }) {
+async function handleSettlement(req, env, { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY }) {
   if (req.method !== 'POST') {
-    res.setHeader('Allow', ['POST']);
-    return res.status(405).json({ error: 'Method not allowed' });
+    return jsonResponse(405, { error: 'Method not allowed' }, { Allow: 'POST' });
   }
 
   const { fundraiser_id: fundraiserId, action } = req.body || {};
   if (!fundraiserId || !['enable', 'pause'].includes(action)) {
-    return res.status(400).json({ error: 'fundraiser_id and a valid action ("enable" or "pause") are required.' });
+    return jsonResponse(400, { error: 'fundraiser_id and a valid action ("enable" or "pause") are required.' });
   }
 
   const headers = supabaseHeaders(SUPABASE_SERVICE_ROLE_KEY);
@@ -206,17 +204,17 @@ async function handleSettlement(req, res, { SUPABASE_URL, SUPABASE_SERVICE_ROLE_
     );
     if (!beneficiaryRes.ok) {
       console.error('Supabase error:', await beneficiaryRes.text());
-      return res.status(500).json({ error: 'Failed to load beneficiary.' });
+      return jsonResponse(500, { error: 'Failed to load beneficiary.' });
     }
     const rows = await beneficiaryRes.json();
     const beneficiary = rows[0];
     if (!beneficiary) {
-      return res.status(404).json({ error: 'No beneficiary is on file for this campaign yet.' });
+      return jsonResponse(404, { error: 'No beneficiary is on file for this campaign yet.' });
     }
 
     if (action === 'enable') {
       if (beneficiary.verification_status !== 'verified' || !beneficiary.paystack_subaccount_code) {
-        return res.status(400).json({
+        return jsonResponse(400, {
           error: 'This beneficiary must be successfully verified before settlement can be enabled.',
         });
       }
@@ -236,21 +234,21 @@ async function handleSettlement(req, res, { SUPABASE_URL, SUPABASE_SERVICE_ROLE_
 
     if (!response.ok) {
       console.error('Supabase error:', await response.text());
-      return res.status(500).json({ error: 'Failed to update settlement status.' });
+      return jsonResponse(500, { error: 'Failed to update settlement status.' });
     }
 
     const updated = await response.json();
-    return res.status(200).json({ beneficiary: updated[0] });
+    return jsonResponse(200, { beneficiary: updated[0] });
   } catch (err) {
     console.error('Unexpected error updating settlement:', err);
-    return res.status(500).json({ error: 'Unexpected server error.' });
+    return jsonResponse(500, { error: 'Unexpected server error.' });
   }
 }
 
 // =========================================================================
 // route=platform-fee — from the original api/admin/platform-fee.js
 // =========================================================================
-async function handlePlatformFee(req, res, { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY }) {
+async function handlePlatformFee(req, env, { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY }) {
   const headers = supabaseHeaders(SUPABASE_SERVICE_ROLE_KEY);
 
   try {
@@ -260,11 +258,11 @@ async function handlePlatformFee(req, res, { SUPABASE_URL, SUPABASE_SERVICE_ROLE
       });
       if (!response.ok) {
         console.error('Supabase error:', await response.text());
-        return res.status(500).json({ error: 'Failed to load platform fee setting.' });
+        return jsonResponse(500, { error: 'Failed to load platform fee setting.' });
       }
       const rows = await response.json();
       const row = rows[0];
-      return res.status(200).json({
+      return jsonResponse(200, {
         enabled: row?.platform_fee_enabled === true,
         rate_percent: PLATFORM_FEE_RATE_PERCENT,
         cap_naira: PLATFORM_FEE_CAP_NAIRA,
@@ -286,16 +284,16 @@ async function handlePlatformFee(req, res, { SUPABASE_URL, SUPABASE_SERVICE_ROLE
           headers: { ...headers, Prefer: 'return=representation' },
           body: JSON.stringify({
             platform_fee_enabled: enabled,
-            updated_by: process.env.ADMIN_USERNAME || 'admin',
+            updated_by: env.ADMIN_USERNAME || 'admin',
             updated_at: new Date().toISOString(),
           }),
         });
         if (!insertRes.ok) {
           console.error('Supabase error:', await insertRes.text());
-          return res.status(500).json({ error: 'Failed to save platform fee setting.' });
+          return jsonResponse(500, { error: 'Failed to save platform fee setting.' });
         }
         const inserted = await insertRes.json();
-        return res.status(200).json({
+        return jsonResponse(200, {
           enabled: inserted[0].platform_fee_enabled,
           rate_percent: PLATFORM_FEE_RATE_PERCENT,
           cap_naira: PLATFORM_FEE_CAP_NAIRA,
@@ -307,27 +305,26 @@ async function handlePlatformFee(req, res, { SUPABASE_URL, SUPABASE_SERVICE_ROLE
         headers: { ...headers, Prefer: 'return=representation' },
         body: JSON.stringify({
           platform_fee_enabled: enabled,
-          updated_by: process.env.ADMIN_USERNAME || 'admin',
+          updated_by: env.ADMIN_USERNAME || 'admin',
           updated_at: new Date().toISOString(),
         }),
       });
       if (!updateRes.ok) {
         console.error('Supabase error:', await updateRes.text());
-        return res.status(500).json({ error: 'Failed to save platform fee setting.' });
+        return jsonResponse(500, { error: 'Failed to save platform fee setting.' });
       }
       const updated = await updateRes.json();
-      return res.status(200).json({
+      return jsonResponse(200, {
         enabled: updated[0].platform_fee_enabled,
         rate_percent: PLATFORM_FEE_RATE_PERCENT,
         cap_naira: PLATFORM_FEE_CAP_NAIRA,
       });
     }
 
-    res.setHeader('Allow', ['GET', 'POST']);
-    return res.status(405).json({ error: 'Method not allowed' });
+    return jsonResponse(405, { error: 'Method not allowed' }, { Allow: 'GET, POST' });
   } catch (err) {
     console.error('Unexpected error with platform fee setting:', err);
-    return res.status(500).json({ error: 'Unexpected server error.' });
+    return jsonResponse(500, { error: 'Unexpected server error.' });
   }
 }
 
@@ -335,7 +332,7 @@ async function handlePlatformFee(req, res, { SUPABASE_URL, SUPABASE_SERVICE_ROLE
 // Default (no ?route=) — from the original api/admin/beneficiaries.js
 // base CRUD: view (full or masked-summary) and save beneficiary details
 // =========================================================================
-async function handleBeneficiaryCrud(req, res, { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY }) {
+async function handleBeneficiaryCrud(req, env, { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY }) {
   const headers = supabaseHeaders(SUPABASE_SERVICE_ROLE_KEY);
 
   try {
@@ -349,7 +346,7 @@ async function handleBeneficiaryCrud(req, res, { SUPABASE_URL, SUPABASE_SERVICE_
         if (req.query.ids !== undefined) {
           const rawIds = String(req.query.ids);
           if (!/^\d+(,\d+)*$/.test(rawIds) || rawIds.split(',').length > 200) {
-            return res.status(400).json({ error: 'ids must be up to 200 comma separated campaign ids.' });
+            return jsonResponse(400, { error: 'ids must be up to 200 comma separated campaign ids.' });
           }
           idFilter = `&fundraiser_id=in.(${rawIds})`;
         }
@@ -363,7 +360,7 @@ async function handleBeneficiaryCrud(req, res, { SUPABASE_URL, SUPABASE_SERVICE_
         );
         if (!allResult.ok) {
           console.error('Supabase error:', allResult.errorText);
-          return res.status(500).json({ error: 'Failed to load beneficiary summaries.' });
+          return jsonResponse(500, { error: 'Failed to load beneficiary summaries.' });
         }
         const rows = allResult.rows;
         const summaries = rows.map((r) => ({
@@ -374,12 +371,12 @@ async function handleBeneficiaryCrud(req, res, { SUPABASE_URL, SUPABASE_SERVICE_
           verification_status: r.verification_status,
           settlement_enabled: r.settlement_enabled,
         }));
-        return res.status(200).json({ beneficiaries: summaries });
+        return jsonResponse(200, { beneficiaries: summaries });
       }
 
       const fundraiserId = req.query.fundraiser_id;
       if (!fundraiserId) {
-        return res.status(400).json({ error: 'A fundraiser_id or ?all=1 is required.' });
+        return jsonResponse(400, { error: 'A fundraiser_id or ?all=1 is required.' });
       }
 
       const response = await fetch(
@@ -388,10 +385,10 @@ async function handleBeneficiaryCrud(req, res, { SUPABASE_URL, SUPABASE_SERVICE_
       );
       if (!response.ok) {
         console.error('Supabase error:', await response.text());
-        return res.status(500).json({ error: 'Failed to load beneficiary.' });
+        return jsonResponse(500, { error: 'Failed to load beneficiary.' });
       }
       const rows = await response.json();
-      return res.status(200).json({ beneficiary: rows[0] || null });
+      return jsonResponse(200, { beneficiary: rows[0] || null });
     }
 
     if (req.method === 'POST') {
@@ -399,10 +396,10 @@ async function handleBeneficiaryCrud(req, res, { SUPABASE_URL, SUPABASE_SERVICE_
       const fundraiserId = body.fundraiser_id;
       const beneficiaryName = (body.beneficiary_name || '').trim();
 
-      if (!fundraiserId) return res.status(400).json({ error: 'fundraiser_id is required.' });
-      if (!beneficiaryName) return res.status(400).json({ error: 'Beneficiary name is required.' });
+      if (!fundraiserId) return jsonResponse(400, { error: 'fundraiser_id is required.' });
+      if (!beneficiaryName) return jsonResponse(400, { error: 'Beneficiary name is required.' });
       if (!body.bank_code || !body.account_number) {
-        return res.status(400).json({ error: 'Bank and account number are required.' });
+        return jsonResponse(400, { error: 'Bank and account number are required.' });
       }
 
       const existingRes = await fetch(
@@ -461,43 +458,43 @@ async function handleBeneficiaryCrud(req, res, { SUPABASE_URL, SUPABASE_SERVICE_
       if (!response.ok) {
         const errText = await response.text();
         console.error('Supabase error:', errText);
-        return res.status(500).json({ error: 'Failed to save beneficiary.', details: errText });
+        return jsonResponse(500, { error: 'Failed to save beneficiary.', details: errText });
       }
 
       const saved = await response.json();
-      return res.status(existing ? 200 : 201).json({
+      return jsonResponse(existing ? 200 : 201, {
         beneficiary: saved[0],
         reverified_required: !existing || bankDetailsChanged,
       });
     }
 
-    res.setHeader('Allow', ['GET', 'POST']);
-    return res.status(405).json({ error: 'Method not allowed' });
+    return jsonResponse(405, { error: 'Method not allowed' }, { Allow: 'GET, POST' });
   } catch (err) {
     console.error('Unexpected error in beneficiary CRUD:', err);
-    return res.status(500).json({ error: 'Unexpected server error.' });
+    return jsonResponse(500, { error: 'Unexpected server error.' });
   }
 }
 
-export default async function handler(req, res) {
+export default async function handler(req, env) {
   const route = req.query.route;
 
   // The bank list is public reference data — no campaign, donor, or
   // beneficiary information is in it — so it's the one route on this
   // file that doesn't require an admin session. This is what lets the
   // public visitor submission form search banks too.
-  if (route === 'banks') return handleBanks(req, res);
+  if (route === 'banks') return handleBanks(req, env);
 
-  if (rejectIfNotAdmin(req, res)) return;
+  const denied = await rejectIfNotAdmin(req, env);
+  if (denied) return denied;
 
-  const supabaseConfig = getSupabaseConfig();
+  const supabaseConfig = getSupabaseConfig(env);
   if (!supabaseConfig.SUPABASE_URL || !supabaseConfig.SUPABASE_SERVICE_ROLE_KEY) {
-    return res.status(500).json({ error: 'Server is missing Supabase configuration.' });
+    return jsonResponse(500, { error: 'Server is missing Supabase configuration.' });
   }
 
-  if (route === 'verify') return handleVerify(req, res, supabaseConfig);
-  if (route === 'settlement') return handleSettlement(req, res, supabaseConfig);
-  if (route === 'platform-fee') return handlePlatformFee(req, res, supabaseConfig);
+  if (route === 'verify') return handleVerify(req, env, supabaseConfig);
+  if (route === 'settlement') return handleSettlement(req, env, supabaseConfig);
+  if (route === 'platform-fee') return handlePlatformFee(req, env, supabaseConfig);
 
-  return handleBeneficiaryCrud(req, res, supabaseConfig);
+  return handleBeneficiaryCrud(req, env, supabaseConfig);
 }

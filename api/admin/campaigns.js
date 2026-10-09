@@ -46,7 +46,7 @@
 // read-only from the admin's point of view and are only ever changed by
 // the Paystack webhook after a real, verified donation.
 
-import crypto from 'crypto';
+import { randomHex } from '../../lib/web-crypto.js';
 import { rejectIfNotAdmin } from '../../lib/admin-auth.js';
 import campaignImages from '../../lib/campaign-images.js';
 // Destructured once, right here, from the module's single default
@@ -59,10 +59,11 @@ import { insertBeneficiary } from '../../lib/beneficiary.js';
 import { getSettledTotalsByCampaign, getSettledForCampaigns } from '../../lib/amount-settled.js';
 import { fetchAllRows, callRpc } from '../../lib/supabase-paging.js';
 import { sendCampaignApprovedEmail, sendCampaignRejectedEmail } from '../../lib/email.js';
+import { jsonResponse } from '../../lib/http.js';
 
-function getSupabaseConfig() {
-  const SUPABASE_URL = (process.env.SUPABASE_URL || '').replace(/\/+$/, '');
-  const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+function getSupabaseConfig(env) {
+  const SUPABASE_URL = (env.SUPABASE_URL || '').replace(/\/+$/, '');
+  const SUPABASE_SERVICE_ROLE_KEY = env.SUPABASE_SERVICE_ROLE_KEY;
   return { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY };
 }
 
@@ -91,7 +92,7 @@ function generateSlug(patientName) {
     .trim()
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/(^-|-$)/g, '');
-  const randomSuffix = crypto.randomBytes(5).toString('hex');
+  const randomSuffix = randomHex(5);
   return `${base || 'patient'}-${randomSuffix}`;
 }
 
@@ -103,7 +104,7 @@ function generateSlug(patientName) {
 // existing "on delete cascade" foreign key — though in the normal
 // failure path here, the beneficiary insert is what failed, so there's
 // usually nothing there to cascade yet.
-async function rollbackCampaign(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, headers, campaign, imageUrl) {
+async function rollbackCampaign(env, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, headers, campaign, imageUrl) {
   try {
     await fetch(`${SUPABASE_URL}/rest/v1/fundraiser?id=eq.${campaign.id}`, {
       method: 'DELETE',
@@ -114,7 +115,7 @@ async function rollbackCampaign(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, headers
   }
 
   if (imageUrl) {
-    const cleanup = await deleteCampaignImage(imageUrl);
+    const cleanup = await deleteCampaignImage(imageUrl, env);
     if (!cleanup.skipped && !cleanup.deleted) {
       console.error(
         `Rolled-back campaign's photo could not be removed from storage. Manual cleanup needed ` +
@@ -127,10 +128,9 @@ async function rollbackCampaign(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, headers
 // =========================================================================
 // route=analytics — from the original api/admin/analytics.js
 // =========================================================================
-async function handleAnalytics(req, res, { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY }) {
+async function handleAnalytics(req, env, { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY }) {
   if (req.method !== 'GET') {
-    res.setHeader('Allow', ['GET']);
-    return res.status(405).json({ error: 'Method not allowed' });
+    return jsonResponse(405, { error: 'Method not allowed' }, { Allow: 'GET' });
   }
 
   const headers = {
@@ -176,7 +176,7 @@ async function handleAnalytics(req, res, { SUPABASE_URL, SUPABASE_SERVICE_ROLE_K
       );
       if (!campaignsResult.ok) {
         console.error('Supabase error:', campaignsResult.errorText);
-        return res.status(500).json({ error: 'Failed to load campaign totals.' });
+        return jsonResponse(500, { error: 'Failed to load campaign totals.' });
       }
       const campaigns = campaignsResult.rows;
 
@@ -279,7 +279,7 @@ async function handleAnalytics(req, res, { SUPABASE_URL, SUPABASE_SERVICE_ROLE_K
     // above are unaffected; null if it could not be read.
     const settledTotals = fastRow ? null : await getSettledTotalsByCampaign(SUPABASE_URL, headers);
 
-    return res.status(200).json({
+    return jsonResponse(200, {
       total_patients: totalPatients,
       active_campaigns: activeCampaigns,
       total_raised: totalRaised,
@@ -292,7 +292,7 @@ async function handleAnalytics(req, res, { SUPABASE_URL, SUPABASE_SERVICE_ROLE_K
     });
   } catch (err) {
     console.error('Unexpected error fetching analytics:', err);
-    return res.status(500).json({ error: 'Unexpected server error.' });
+    return jsonResponse(500, { error: 'Unexpected server error.' });
   }
 }
 
@@ -323,7 +323,7 @@ function campaignMatchesTab(c, tab) {
   }
 }
 
-async function handlePagedCampaignList(req, res, { SUPABASE_URL, headers, search }) {
+async function handlePagedCampaignList(req, env, { SUPABASE_URL, headers, search }) {
   const tab = ADMIN_TABS.includes(req.query.tab) ? req.query.tab : 'all';
   const page = Math.max(1, Math.floor(Number(req.query.page)) || 1);
   const offset = (page - 1) * ADMIN_PAGE_SIZE;
@@ -370,7 +370,7 @@ async function handlePagedCampaignList(req, res, { SUPABASE_URL, headers, search
     const all = await fetchAllRows(url, headers);
     if (!all.ok) {
       console.error('Supabase error:', all.errorText);
-      return res.status(500).json({ error: 'Failed to fetch campaigns.' });
+      return jsonResponse(500, { error: 'Failed to fetch campaigns.' });
     }
     const inTab = all.rows.filter((c) => campaignMatchesTab(c, tab));
     rows = inTab.slice(offset, offset + ADMIN_PAGE_SIZE);
@@ -390,7 +390,7 @@ async function handlePagedCampaignList(req, res, { SUPABASE_URL, headers, search
 
   const body = { campaigns, has_more: hasMore };
   if (counts) body.counts = counts;
-  return res.status(200).json(body);
+  return jsonResponse(200, body);
 }
 
 // =========================================================================
@@ -400,10 +400,9 @@ async function handlePagedCampaignList(req, res, { SUPABASE_URL, headers, search
 // duplicate the full upload implementation here; it's now the single
 // shared implementation instead.
 // =========================================================================
-async function handleUploadImage(req, res) {
+async function handleUploadImage(req, env) {
   if (req.method !== 'POST') {
-    res.setHeader('Allow', ['POST']);
-    return res.status(405).json({ error: 'Method not allowed' });
+    return jsonResponse(405, { error: 'Method not allowed' }, { Allow: 'POST' });
   }
 
   // Defensive guard against an import/export or bundling problem making
@@ -417,31 +416,32 @@ async function handleUploadImage(req, res) {
       `[admin/campaigns:upload-image] uploadCampaignImage is not available as a function (got: ${typeof uploadCampaignImage}). ` +
         `This points to a broken import from lib/campaign-images.js or a stale/partial deployment.`
     );
-    return res.status(500).json({ error: 'Image upload is temporarily unavailable. Please try again shortly.' });
+    return jsonResponse(500, { error: 'Image upload is temporarily unavailable. Please try again shortly.' });
   }
 
   const { fileBase64, contentType } = req.body || {};
-  const result = await uploadCampaignImage(fileBase64, contentType);
+  const result = await uploadCampaignImage(fileBase64, contentType, env);
 
   if (!result.ok) {
-    return res.status(result.status || 500).json({ error: result.error });
+    return jsonResponse(result.status || 500, { error: result.error });
   }
 
-  return res.status(200).json({ url: result.url });
+  return jsonResponse(200, { url: result.url });
 }
 
-export default async function handler(req, res) {
-  if (rejectIfNotAdmin(req, res)) return;
+export default async function handler(req, env) {
+  const denied = await rejectIfNotAdmin(req, env);
+  if (denied) return denied;
 
-  const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = getSupabaseConfig();
+  const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = getSupabaseConfig(env);
   if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
-    return res.status(500).json({ error: 'Server is missing Supabase configuration.' });
+    return jsonResponse(500, { error: 'Server is missing Supabase configuration.' });
   }
   const headers = supabaseHeaders(SUPABASE_SERVICE_ROLE_KEY);
 
   const route = req.query.route;
-  if (route === 'analytics') return handleAnalytics(req, res, { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY });
-  if (route === 'upload-image') return handleUploadImage(req, res);
+  if (route === 'analytics') return handleAnalytics(req, env, { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY });
+  if (route === 'upload-image') return handleUploadImage(req, env);
 
   try {
     // ---------------------------------------------------------------
@@ -453,7 +453,7 @@ export default async function handler(req, res) {
       // The dashboard asks for one page at a time (?page=N&tab=...).
       // Without ?page the whole list is returned, exactly as before.
       if (req.query.page !== undefined) {
-        return handlePagedCampaignList(req, res, { SUPABASE_URL, headers, search });
+        return handlePagedCampaignList(req, env, { SUPABASE_URL, headers, search });
       }
 
       // order=created_at.desc,id.desc keeps the exact same visible order;
@@ -468,7 +468,7 @@ export default async function handler(req, res) {
       const campaignsResult = await fetchAllRows(url, headers);
       if (!campaignsResult.ok) {
         console.error('Supabase error:', campaignsResult.errorText);
-        return res.status(500).json({ error: 'Failed to fetch campaigns.' });
+        return jsonResponse(500, { error: 'Failed to fetch campaigns.' });
       }
       const campaigns = campaignsResult.rows;
 
@@ -480,7 +480,7 @@ export default async function handler(req, res) {
         ...c,
         amount_settled: settledTotals ? settledTotals.byCampaign[c.id] || 0 : null,
       }));
-      return res.status(200).json({ campaigns: campaignsWithSettled });
+      return jsonResponse(200, { campaigns: campaignsWithSettled });
     }
 
     // ---------------------------------------------------------------
@@ -491,11 +491,11 @@ export default async function handler(req, res) {
       const patientName = (body.patient_name || '').trim();
 
       if (!patientName) {
-        return res.status(400).json({ error: 'Patient name is required.' });
+        return jsonResponse(400, { error: 'Patient name is required.' });
       }
       const goalAmount = Number(body.goal_amount);
       if (!goalAmount || goalAmount <= 0) {
-        return res.status(400).json({ error: 'A valid goal amount is required.' });
+        return jsonResponse(400, { error: 'A valid goal amount is required.' });
       }
 
       // Primary contact phone number is required for every NEW campaign
@@ -505,7 +505,7 @@ export default async function handler(req, res) {
       // supabase.sql for why). Secondary phone number stays optional.
       const phoneNumber = (body.phone_number || '').trim();
       if (!phoneNumber) {
-        return res.status(400).json({ error: 'A primary contact phone number is required.' });
+        return jsonResponse(400, { error: 'A primary contact phone number is required.' });
       }
       const secondaryPhoneNumber = (body.secondary_phone_number || '').trim() || null;
 
@@ -520,7 +520,7 @@ export default async function handler(req, res) {
       const beneficiaryBankCode = body.bank_code;
       const beneficiaryAccountNumber = (body.account_number || '').trim();
       if (!beneficiaryName || !beneficiaryBankCode || !beneficiaryAccountNumber) {
-        return res.status(400).json({
+        return jsonResponse(400, {
           error: 'Beneficiary name, bank, and account number are all required to create a campaign.',
         });
       }
@@ -593,7 +593,7 @@ export default async function handler(req, res) {
         // fails, we log it clearly so it can be found and removed by
         // hand rather than silently losing track of it.
         if (imageUrl) {
-          const cleanup = await deleteCampaignImage(imageUrl);
+          const cleanup = await deleteCampaignImage(imageUrl, env);
           if (!cleanup.skipped && !cleanup.deleted) {
             console.error(
               `Campaign save failed AND its uploaded photo could not be rolled back automatically. ` +
@@ -605,7 +605,7 @@ export default async function handler(req, res) {
           }
         }
 
-        return res.status(500).json({
+        return jsonResponse(500, {
           error: 'Failed to create campaign. Any uploaded photo has been cleaned up automatically.',
           // Safe to expose: this endpoint already requires a valid admin
           // session, and seeing the real database error is what lets you
@@ -638,14 +638,14 @@ export default async function handler(req, res) {
 
       if (!beneficiaryResult.ok) {
         console.error('Failed to create linked beneficiary, rolling back campaign:', beneficiaryResult.error);
-        await rollbackCampaign(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, headers, newCampaignRecord, imageUrl);
-        return res.status(500).json({
+        await rollbackCampaign(env, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, headers, newCampaignRecord, imageUrl);
+        return jsonResponse(500, {
           error: 'Campaign could not be saved because its beneficiary details failed to save. Nothing was created — please try again.',
           details: beneficiaryResult.error,
         });
       }
 
-      return res.status(201).json({ campaign: newCampaignRecord, beneficiary: beneficiaryResult.data });
+      return jsonResponse(201, { campaign: newCampaignRecord, beneficiary: beneficiaryResult.data });
     }
 
     // ---------------------------------------------------------------
@@ -653,7 +653,7 @@ export default async function handler(req, res) {
     // ---------------------------------------------------------------
     if (req.method === 'PATCH') {
       const id = req.query.id;
-      if (!id) return res.status(400).json({ error: 'Campaign id is required.' });
+      if (!id) return jsonResponse(400, { error: 'Campaign id is required.' });
 
       const body = req.body || {};
       const updates = {};
@@ -687,7 +687,7 @@ export default async function handler(req, res) {
       // 'rejected' to reject), reusing this existing endpoint rather
       // than adding a separate approve/reject one.
       if (updates.status && !['active', 'archived', 'pending', 'rejected'].includes(updates.status)) {
-        return res.status(400).json({ error: 'Status must be "active", "archived", "pending", or "rejected".' });
+        return jsonResponse(400, { error: 'Status must be "active", "archived", "pending", or "rejected".' });
       }
 
       // Rejecting a visitor submission: save the admin's reason (or a
@@ -704,7 +704,7 @@ export default async function handler(req, res) {
       }
 
       if (Object.keys(updates).length === 0) {
-        return res.status(400).json({ error: 'No editable fields were provided.' });
+        return jsonResponse(400, { error: 'No editable fields were provided.' });
       }
 
       // ---- Look up the campaign's CURRENT status before updating it ----
@@ -762,19 +762,19 @@ export default async function handler(req, res) {
         console.error('Supabase error:', await response.text());
         // The update failed — we haven't touched Storage at all, so the
         // old image (if any) is still exactly where it was.
-        return res.status(500).json({ error: 'Failed to update campaign.' });
+        return jsonResponse(500, { error: 'Failed to update campaign.' });
       }
 
       const updated = await response.json();
       if (!updated || updated.length === 0) {
-        return res.status(404).json({ error: 'Campaign not found.' });
+        return jsonResponse(404, { error: 'Campaign not found.' });
       }
 
       // ---- The update succeeded. ONLY NOW is it safe to remove the old
       // photo, and only if it actually changed to something different. ----
       let imageCleanupWarning = null;
       if (isReplacingImage && oldImageUrl && oldImageUrl !== updates.image_url) {
-        const cleanup = await deleteCampaignImage(oldImageUrl);
+        const cleanup = await deleteCampaignImage(oldImageUrl, env);
         if (!cleanup.skipped && !cleanup.deleted) {
           console.error(
             `Campaign ${id} was updated successfully, but its old photo could not be removed from ` +
@@ -803,7 +803,7 @@ export default async function handler(req, res) {
               submitterName: updatedCampaign.submitter_name,
               patientName: updatedCampaign.patient_name,
               slug: updatedCampaign.slug,
-            });
+            }, env);
             if (!emailResult.ok && !emailResult.skipped) {
               console.error(`[email] Approval email failed to send for fundraiser ${id}.`, emailResult.error);
             }
@@ -814,7 +814,7 @@ export default async function handler(req, res) {
               patientName: updatedCampaign.patient_name,
               trackingToken: updatedCampaign.tracking_token,
               rejectionReason: updatedCampaign.rejection_reason,
-            });
+            }, env);
             if (!emailResult.ok && !emailResult.skipped) {
               console.error(`[email] Rejection email failed to send for fundraiser ${id}.`, emailResult.error);
             }
@@ -827,7 +827,7 @@ export default async function handler(req, res) {
         }
       }
 
-      return res.status(200).json({
+      return jsonResponse(200, {
         campaign: updated[0],
         ...(imageCleanupWarning ? { warning: imageCleanupWarning } : {}),
       });
@@ -840,7 +840,7 @@ export default async function handler(req, res) {
     // ---------------------------------------------------------------
     if (req.method === 'DELETE') {
       const id = req.query.id;
-      if (!id) return res.status(400).json({ error: 'Campaign id is required.' });
+      if (!id) return jsonResponse(400, { error: 'Campaign id is required.' });
 
       // We need this campaign's image_url BEFORE deleting the row —
       // once the row is gone, there's no record left of which file in
@@ -864,14 +864,14 @@ export default async function handler(req, res) {
 
       if (!response.ok) {
         console.error('Supabase error:', await response.text());
-        return res.status(500).json({ error: 'Failed to delete campaign.' });
+        return jsonResponse(500, { error: 'Failed to delete campaign.' });
       }
 
       // The campaign row (and its donations, via ON DELETE CASCADE) is
       // gone. Now clean up its photo — this ONLY ever touches the exact
       // file this one campaign was using, never another campaign's image,
       // since we're deleting by this campaign's own stored image_url.
-      const cleanup = await deleteCampaignImage(imageUrl);
+      const cleanup = await deleteCampaignImage(imageUrl, env);
 
       if (!cleanup.skipped && !cleanup.deleted) {
         // The database delete succeeded, but Storage cleanup didn't.
@@ -882,7 +882,7 @@ export default async function handler(req, res) {
             `Manual cleanup needed in Supabase Storage (bucket "campaign-images"): ${imageUrl}. ` +
             `Storage error: ${cleanup.error}`
         );
-        return res.status(200).json({
+        return jsonResponse(200, {
           success: true,
           campaign_deleted: true,
           image_deleted: false,
@@ -891,13 +891,12 @@ export default async function handler(req, res) {
         });
       }
 
-      return res.status(200).json({ success: true, campaign_deleted: true, image_deleted: cleanup.deleted });
+      return jsonResponse(200, { success: true, campaign_deleted: true, image_deleted: cleanup.deleted });
     }
 
-    res.setHeader('Allow', ['GET', 'POST', 'PATCH', 'DELETE']);
-    return res.status(405).json({ error: 'Method not allowed' });
+    return jsonResponse(405, { error: 'Method not allowed' }, { Allow: 'GET, POST, PATCH, DELETE' });
   } catch (err) {
     console.error('Unexpected error in /api/admin/campaigns:', err);
-    return res.status(500).json({ error: 'Unexpected server error.' });
+    return jsonResponse(500, { error: 'Unexpected server error.' });
   }
 }

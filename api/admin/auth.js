@@ -13,9 +13,10 @@
 //   GET  /api/admin/auth?action=me      -> { authenticated: true|false }
 //
 // The admin username/password are NOT stored in Supabase — they live
-// only as Vercel environment variables (ADMIN_USERNAME, ADMIN_PASSWORD).
+// only as Cloudflare Worker secrets (ADMIN_USERNAME, ADMIN_PASSWORD).
 
-import crypto from 'crypto';
+import { safeEqualStrings } from '../../lib/web-crypto.js';
+import { jsonResponse } from '../../lib/http.js';
 import {
   createSessionToken,
   buildSessionCookieHeader,
@@ -25,77 +26,66 @@ import {
 
 // Constant-time string comparison so an attacker can't use tiny timing
 // differences to guess the password one character at a time.
-function safeEqual(a, b) {
-  const bufA = Buffer.from(String(a));
-  const bufB = Buffer.from(String(b));
-  if (bufA.length !== bufB.length) return false;
-  return crypto.timingSafeEqual(bufA, bufB);
-}
 
-async function handleLogin(req, res) {
+async function handleLogin(req, env) {
   if (req.method !== 'POST') {
-    res.setHeader('Allow', ['POST']);
-    return res.status(405).json({ error: 'Method not allowed' });
+    return jsonResponse(405, { error: 'Method not allowed' }, { Allow: 'POST' });
   }
 
-  const ADMIN_USERNAME = process.env.ADMIN_USERNAME;
-  const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD;
-  const ADMIN_SESSION_SECRET = process.env.ADMIN_SESSION_SECRET;
+  const ADMIN_USERNAME = env.ADMIN_USERNAME;
+  const ADMIN_PASSWORD = env.ADMIN_PASSWORD;
+  const ADMIN_SESSION_SECRET = env.ADMIN_SESSION_SECRET;
 
   if (!ADMIN_USERNAME || !ADMIN_PASSWORD || !ADMIN_SESSION_SECRET) {
     console.error('Admin env vars are missing (ADMIN_USERNAME/ADMIN_PASSWORD/ADMIN_SESSION_SECRET).');
-    return res.status(500).json({ error: 'Admin login is not configured on the server yet.' });
+    return jsonResponse(500, { error: 'Admin login is not configured on the server yet.' });
   }
 
   const { username, password } = req.body || {};
 
   if (!username || !password) {
-    return res.status(400).json({ error: 'Username and password are required.' });
+    return jsonResponse(400, { error: 'Username and password are required.' });
   }
 
-  const usernameMatches = safeEqual(username, ADMIN_USERNAME);
-  const passwordMatches = safeEqual(password, ADMIN_PASSWORD);
+  const usernameMatches = await safeEqualStrings(username, ADMIN_USERNAME);
+  const passwordMatches = await safeEqualStrings(password, ADMIN_PASSWORD);
 
   if (!usernameMatches || !passwordMatches) {
     // Deliberately vague error message — don't reveal which field was wrong
-    return res.status(401).json({ error: 'Invalid username or password.' });
+    return jsonResponse(401, { error: 'Invalid username or password.' });
   }
 
   // Credentials are correct — issue a signed session cookie
-  const token = createSessionToken();
-  res.setHeader('Set-Cookie', buildSessionCookieHeader(token));
-  return res.status(200).json({ success: true });
+  const token = await createSessionToken(env);
+  return jsonResponse(200, { success: true }, { 'Set-Cookie': buildSessionCookieHeader(token, req) });
 }
 
-async function handleLogout(req, res) {
+async function handleLogout(req, env) {
   if (req.method !== 'POST') {
-    res.setHeader('Allow', ['POST']);
-    return res.status(405).json({ error: 'Method not allowed' });
+    return jsonResponse(405, { error: 'Method not allowed' }, { Allow: 'POST' });
   }
 
-  res.setHeader('Set-Cookie', buildClearCookieHeader());
-  return res.status(200).json({ success: true });
+  return jsonResponse(200, { success: true }, { 'Set-Cookie': buildClearCookieHeader() });
 }
 
-async function handleMe(req, res) {
+async function handleMe(req, env) {
   if (req.method !== 'GET') {
-    res.setHeader('Allow', ['GET']);
-    return res.status(405).json({ error: 'Method not allowed' });
+    return jsonResponse(405, { error: 'Method not allowed' }, { Allow: 'GET' });
   }
 
-  if (!isAdminRequest(req)) {
-    return res.status(401).json({ authenticated: false });
+  if (!(await isAdminRequest(req, env))) {
+    return jsonResponse(401, { authenticated: false });
   }
 
-  return res.status(200).json({ authenticated: true });
+  return jsonResponse(200, { authenticated: true });
 }
 
-export default async function handler(req, res) {
+export default async function handler(req, env) {
   const action = req.query.action;
 
-  if (action === 'login') return handleLogin(req, res);
-  if (action === 'logout') return handleLogout(req, res);
-  if (action === 'me') return handleMe(req, res);
+  if (action === 'login') return handleLogin(req, env);
+  if (action === 'logout') return handleLogout(req, env);
+  if (action === 'me') return handleMe(req, env);
 
-  return res.status(400).json({ error: 'Unknown or missing ?action= (expected "login", "logout", or "me").' });
+  return jsonResponse(400, { error: 'Unknown or missing ?action= (expected "login", "logout", or "me").' });
 }
