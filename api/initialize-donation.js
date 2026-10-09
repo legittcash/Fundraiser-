@@ -43,28 +43,28 @@
 // split through — see STEP 4 below for why.
 
 import { initializeTransaction } from '../lib/paystack.js';
+import { jsonResponse } from '../lib/http.js';
 
 const PLATFORM_FEE_RATE = 0.01; // 1%
 const PLATFORM_FEE_CAP_NAIRA = 1000; // ₦1,000 maximum per transaction
 
-function getSupabaseConfig() {
-  const SUPABASE_URL = (process.env.SUPABASE_URL || '').replace(/\/+$/, '');
-  const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+function getSupabaseConfig(env) {
+  const SUPABASE_URL = (env.SUPABASE_URL || '').replace(/\/+$/, '');
+  const SUPABASE_SERVICE_ROLE_KEY = env.SUPABASE_SERVICE_ROLE_KEY;
   return { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY };
 }
 
-export default async function handler(req, res) {
+export default async function handler(req, env) {
   if (req.method !== 'POST') {
-    res.setHeader('Allow', ['POST']);
-    return res.status(405).json({ error: 'Method not allowed' });
+    return jsonResponse(405, { error: 'Method not allowed' }, { Allow: 'POST' });
   }
 
-  const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = getSupabaseConfig();
+  const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = getSupabaseConfig(env);
   if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
-    return res.status(500).json({ error: 'Server is missing Supabase configuration.' });
+    return jsonResponse(500, { error: 'Server is missing Supabase configuration.' });
   }
-  if (!process.env.PAYSTACK_SECRET_KEY) {
-    return res.status(500).json({ error: 'Server is missing PAYSTACK_SECRET_KEY.' });
+  if (!env.PAYSTACK_SECRET_KEY) {
+    return jsonResponse(500, { error: 'Server is missing PAYSTACK_SECRET_KEY.' });
   }
 
   const body = req.body || {};
@@ -74,14 +74,14 @@ export default async function handler(req, res) {
   const amount = Number(body.amount);
   const anonymous = body.anonymous === true;
 
-  if (!fundraiserId) return res.status(400).json({ error: 'fundraiser_id is required.' });
-  if (!donorName) return res.status(400).json({ error: 'Your name is required.' });
+  if (!fundraiserId) return jsonResponse(400, { error: 'fundraiser_id is required.' });
+  if (!donorName) return jsonResponse(400, { error: 'Your name is required.' });
   // Number.isFinite() also rejects Infinity, which `!amount` lets through.
   if (!Number.isFinite(amount) || amount < 100) {
-    return res.status(400).json({ error: 'Minimum donation is ₦100.' });
+    return jsonResponse(400, { error: 'Minimum donation is ₦100.' });
   }
   if (donorEmail && !donorEmail.includes('@')) {
-    return res.status(400).json({ error: 'That email address doesn\'t look right. You can also leave it blank.' });
+    return jsonResponse(400, { error: 'That email address doesn\'t look right. You can also leave it blank.' });
   }
 
   const headers = {
@@ -97,11 +97,11 @@ export default async function handler(req, res) {
     );
     if (!campaignRes.ok) {
       console.error('Supabase error:', await campaignRes.text());
-      return res.status(500).json({ error: 'Failed to load campaign.' });
+      return jsonResponse(500, { error: 'Failed to load campaign.' });
     }
     const campaignRows = await campaignRes.json();
     const campaign = campaignRows[0];
-    if (!campaign) return res.status(404).json({ error: 'Campaign not found.' });
+    if (!campaign) return jsonResponse(404, { error: 'Campaign not found.' });
 
     // ---- STEP 2: Look up the CURRENT beneficiary/settlement state ----
     // This is looked up fresh on every single donation initialization —
@@ -164,10 +164,10 @@ export default async function handler(req, res) {
     // Paystack requires SOME email to initialize a transaction, even
     // though our form makes email optional for the donor.
     const emailForPaystack = donorEmail || `donor-${Date.now()}@no-email-provided.example.com`;
-    const host = req.headers.host;
+    const host = req.headers.get('host') || req.url.host;
     const callbackUrl = `https://${host}/campaign.html?slug=${encodeURIComponent(campaign.slug)}`;
 
-    const result = await initializeTransaction({
+    const result = await initializeTransaction(env, {
       email: emailForPaystack,
       amountKobo,
       callbackUrl,
@@ -203,15 +203,15 @@ export default async function handler(req, res) {
 
     if (!result.ok) {
       console.error('Paystack initialize failed:', result.error);
-      return res.status(502).json({ error: result.error });
+      return jsonResponse(502, { error: result.error });
     }
 
-    return res.status(200).json({
+    return jsonResponse(200, {
       authorization_url: result.data.authorization_url,
       reference: result.data.reference,
     });
   } catch (err) {
     console.error('Unexpected error in /api/initialize-donation:', err);
-    return res.status(500).json({ error: 'Unexpected server error.' });
+    return jsonResponse(500, { error: 'Unexpected server error.' });
   }
 }

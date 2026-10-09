@@ -51,22 +51,22 @@
 // fields only let the PREVIEW match that reality instead of guessing.
 
 import { getAmountSettled } from '../lib/amount-settled.js';
+import { jsonResponse } from '../lib/http.js';
 
-export default async function handler(req, res) {
+export default async function handler(req, env) {
   if (req.method !== 'GET') {
-    res.setHeader('Allow', ['GET']);
-    return res.status(405).json({ error: 'Method not allowed' });
+    return jsonResponse(405, { error: 'Method not allowed' }, { Allow: 'GET' });
   }
 
-  const SUPABASE_URL = (process.env.SUPABASE_URL || '').replace(/\/+$/, '');
-  const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  const SUPABASE_URL = (env.SUPABASE_URL || '').replace(/\/+$/, '');
+  const SUPABASE_SERVICE_ROLE_KEY = env.SUPABASE_SERVICE_ROLE_KEY;
   if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
-    return res.status(500).json({ error: 'Server is missing Supabase configuration.' });
+    return jsonResponse(500, { error: 'Server is missing Supabase configuration.' });
   }
 
   const slug = (req.query.slug || '').trim();
   if (!slug) {
-    return res.status(400).json({ error: 'A campaign slug is required.' });
+    return jsonResponse(400, { error: 'A campaign slug is required.' });
   }
 
   const headers = {
@@ -89,12 +89,12 @@ export default async function handler(req, res) {
 
     if (!response.ok) {
       console.error('Supabase error:', await response.text());
-      return res.status(500).json({ error: 'Failed to load campaign.' });
+      return jsonResponse(500, { error: 'Failed to load campaign.' });
     }
 
     const rows = await response.json();
     if (!rows || rows.length === 0) {
-      return res.status(404).json({ error: 'Campaign not found.' });
+      return jsonResponse(404, { error: 'Campaign not found.' });
     }
 
     const campaign = rows[0];
@@ -147,7 +147,7 @@ export default async function handler(req, res) {
     // no beneficiary or per donation data. null if it could not be read.
     const amountSettled = await getAmountSettled(SUPABASE_URL, headers, campaign.id);
 
-    return res.status(200).json({
+    return jsonResponse(200, {
       campaign: {
         ...campaign,
         platform_fee_enabled: platformFeeEnabled,
@@ -158,7 +158,7 @@ export default async function handler(req, res) {
     });
   } catch (err) {
     console.error('Unexpected error in /api/campaign:', err);
-    return res.status(500).json({ error: 'Unexpected server error.' });
+    return jsonResponse(500, { error: 'Unexpected server error.' });
   }
 }
 

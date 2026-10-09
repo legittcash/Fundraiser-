@@ -21,9 +21,11 @@
 // every internal/admin field (id, beneficiary/settlement info, donation
 // details) are NEVER returned by this endpoint.
 
-function getSupabaseConfig() {
-  const SUPABASE_URL = (process.env.SUPABASE_URL || '').replace(/\/+$/, '');
-  const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+import { jsonResponse, emptyResponse } from '../lib/http.js';
+
+function getSupabaseConfig(env) {
+  const SUPABASE_URL = (env.SUPABASE_URL || '').replace(/\/+$/, '');
+  const SUPABASE_SERVICE_ROLE_KEY = env.SUPABASE_SERVICE_ROLE_KEY;
   return { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY };
 }
 
@@ -33,30 +35,33 @@ function getSupabaseConfig() {
 // the allowlist below, applied AFTER this query, not this select list.
 const LOOKUP_FIELDS = 'patient_name,status,created_at,rejection_reason,slug';
 
-export default async function handler(req, res) {
+export default async function handler(req, env) {
   // No-cache — a visitor may check this page repeatedly right after an
   // admin approves/rejects their submission, and must never see a
-  // stale, cached status.
-  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+  // stale, cached status. The header goes on EVERY response from this
+  // endpoint (success and error alike), as it did before.
+  const response = await handleTrackCampaign(req, env);
+  response.headers.set('Cache-Control', 'no-store, no-cache, must-revalidate');
+  return response;
+}
 
+async function handleTrackCampaign(req, env) {
   if (req.method === 'OPTIONS') {
-    res.setHeader('Allow', ['GET', 'OPTIONS']);
-    return res.status(204).end();
+    return emptyResponse(204, { Allow: 'GET, OPTIONS' });
   }
 
   if (req.method !== 'GET') {
-    res.setHeader('Allow', ['GET', 'OPTIONS']);
-    return res.status(405).json({ error: 'Method not allowed' });
+    return jsonResponse(405, { error: 'Method not allowed' }, { Allow: 'GET, OPTIONS' });
   }
 
-  const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = getSupabaseConfig();
+  const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = getSupabaseConfig(env);
   if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
-    return res.status(500).json({ error: 'Server is missing Supabase configuration.' });
+    return jsonResponse(500, { error: 'Server is missing Supabase configuration.' });
   }
 
   const token = (req.query.token || '').trim();
   if (!token) {
-    return res.status(400).json({ error: 'A tracking token is required.' });
+    return jsonResponse(400, { error: 'A tracking token is required.' });
   }
 
   try {
@@ -73,12 +78,12 @@ export default async function handler(req, res) {
     if (!response.ok) {
       // Never leak the raw Supabase error to an unauthenticated caller.
       console.error('[track-campaign] Supabase error:', await response.text());
-      return res.status(500).json({ error: 'Something went wrong looking up your submission. Please try again later.' });
+      return jsonResponse(500, { error: 'Something went wrong looking up your submission. Please try again later.' });
     }
 
     const rows = await response.json();
     if (!rows || rows.length === 0) {
-      return res.status(404).json({ error: 'We could not find a submission with that tracking link.' });
+      return jsonResponse(404, { error: 'We could not find a submission with that tracking link.' });
     }
 
     const campaign = rows[0];
@@ -100,9 +105,9 @@ export default async function handler(req, res) {
       result.public_url = `/campaign.html?slug=${encodeURIComponent(campaign.slug)}`;
     }
 
-    return res.status(200).json(result);
+    return jsonResponse(200, result);
   } catch (err) {
     console.error('[track-campaign] Unexpected error:', err);
-    return res.status(500).json({ error: 'Unexpected server error.' });
+    return jsonResponse(500, { error: 'Unexpected server error.' });
   }
 }

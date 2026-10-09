@@ -78,59 +78,46 @@
 // here could silently drift from what Paystack actually split, which
 // would corrupt the accounting.
 
-import crypto from 'crypto';
+import { hmacHex, timingSafeEqualHex } from '../lib/web-crypto.js';
+import { jsonResponse } from '../lib/http.js';
 
-// Vercel needs the RAW request body (not pre-parsed JSON) so we can
-// verify Paystack's signature correctly. This config disables Vercel's
-// automatic body parsing for this function.
-export const config = {
-  api: {
-    bodyParser: false,
-  },
-};
+// Cloudflare Workers hands this function the standard Web Request. Unlike
+// the old Vercel version there is no body-parser to switch off and no
+// Node stream to read: request.text() returns the body EXACTLY as Paystack
+// sent it, and nothing in the router touches this request's body first.
+// (Every other route goes through parseRequest(); this one deliberately
+// does not — see src/index.js.)
 
-// Helper: read the raw request body as a string/buffer
-function getRawBody(req) {
-  return new Promise((resolve, reject) => {
-    let data = '';
-    req.on('data', (chunk) => (data += chunk));
-    req.on('end', () => resolve(data));
-    req.on('error', reject);
-  });
-}
-
-export default async function handler(req, res) {
-  if (req.method !== 'POST') {
-    res.setHeader('Allow', ['POST']);
-    return res.status(405).json({ error: 'Method not allowed' });
+export default async function handler(request, env) {
+  if (request.method !== 'POST') {
+    return jsonResponse(405, { error: 'Method not allowed' }, { Allow: 'POST' });
   }
 
-  const PAYSTACK_SECRET_KEY = process.env.PAYSTACK_SECRET_KEY;
-  const SUPABASE_URL = process.env.SUPABASE_URL;
-  const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  const PAYSTACK_SECRET_KEY = env.PAYSTACK_SECRET_KEY;
+  const SUPABASE_URL = env.SUPABASE_URL;
+  const SUPABASE_SERVICE_ROLE_KEY = env.SUPABASE_SERVICE_ROLE_KEY;
 
   if (!PAYSTACK_SECRET_KEY || !SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
     console.error('Missing required environment variables.');
-    return res.status(500).json({ error: 'Server misconfigured.' });
+    return jsonResponse(500, { error: 'Server misconfigured.' });
   }
 
   // ---- STEP 1: Read the raw body and verify Paystack's signature ----
-  const rawBody = await getRawBody(req);
+  const rawBody = await request.text();
 
   // Paystack signs every webhook with your SECRET key and sends the
   // signature in the "x-paystack-signature" header. We recompute the
   // same signature ourselves; if it doesn't match, we reject the
   // request because it did NOT genuinely come from Paystack.
-  const expectedSignature = crypto
-    .createHmac('sha512', PAYSTACK_SECRET_KEY)
-    .update(rawBody)
-    .digest('hex');
+  const expectedSignature = await hmacHex('SHA-512', PAYSTACK_SECRET_KEY, rawBody);
 
-  const paystackSignature = req.headers['x-paystack-signature'];
+  const paystackSignature = request.headers.get('x-paystack-signature');
 
-  if (expectedSignature !== paystackSignature) {
+  // Constant-time comparison of the two hex signatures. A missing,
+  // malformed, or wrong header all fail the same way.
+  if (!paystackSignature || !timingSafeEqualHex(expectedSignature, paystackSignature)) {
     console.warn('Invalid Paystack webhook signature received.');
-    return res.status(401).json({ error: 'Invalid signature.' });
+    return jsonResponse(401, { error: 'Invalid signature.' });
   }
 
   // ---- STEP 2: Parse the verified body ----
@@ -139,7 +126,7 @@ export default async function handler(req, res) {
   // We only care about successful charge events
   if (event.event !== 'charge.success') {
     // Acknowledge receipt so Paystack doesn't keep retrying, but do nothing
-    return res.status(200).json({ received: true, ignored: true });
+    return jsonResponse(200, { received: true, ignored: true });
   }
 
   // Amount from Paystack is in kobo, so we convert back to naira
@@ -261,7 +248,7 @@ export default async function handler(req, res) {
 
   if (!reference) {
     console.error('Webhook payload is missing event.data.reference.');
-    return res.status(400).json({ error: 'Missing transaction reference.' });
+    return jsonResponse(400, { error: 'Missing transaction reference.' });
   }
 
   try {
@@ -275,7 +262,7 @@ export default async function handler(req, res) {
       console.error(
         `Webhook for reference ${reference} is missing metadata.fundraiser_id — rejecting without crediting any campaign.`
       );
-      return res.status(400).json({ error: 'Missing fundraiser_id in transaction metadata.' });
+      return jsonResponse(400, { error: 'Missing fundraiser_id in transaction metadata.' });
     }
 
     const getRes = await fetch(
@@ -291,7 +278,7 @@ export default async function handler(req, res) {
     if (!getRes.ok) {
       const errText = await getRes.text();
       console.error('Supabase error looking up fundraiser:', errText);
-      return res.status(500).json({ error: 'Failed to look up campaign.' });
+      return jsonResponse(500, { error: 'Failed to look up campaign.' });
     }
 
     const rows = await getRes.json();
@@ -300,7 +287,7 @@ export default async function handler(req, res) {
         `Webhook for reference ${reference} references fundraiser_id ${fundraiserId}, which does not exist — ` +
           `rejecting without crediting any campaign.`
       );
-      return res.status(400).json({ error: 'Campaign not found for this donation.' });
+      return jsonResponse(400, { error: 'Campaign not found for this donation.' });
     }
 
     const current = rows[0];
@@ -353,7 +340,7 @@ export default async function handler(req, res) {
     if (!rpcRes.ok) {
       const errText = await rpcRes.text();
       console.error('Failed to atomically record donation and update fundraiser totals:', errText);
-      return res.status(500).json({ error: 'Failed to record donation.' });
+      return jsonResponse(500, { error: 'Failed to record donation.' });
     }
 
     const rpcRows = await rpcRes.json();
@@ -364,13 +351,13 @@ export default async function handler(req, res) {
       // acknowledge with 200 OK (so Paystack stops retrying) but confirm
       // nothing was credited a second time.
       console.log(`Duplicate webhook for reference ${reference}, skipping — totals unchanged.`);
-      return res.status(200).json({ received: true, duplicate: true });
+      return jsonResponse(200, { received: true, duplicate: true });
     }
 
     // ---- STEP 5: Tell Paystack we successfully handled the event ----
-    return res.status(200).json({ received: true, updated: true });
+    return jsonResponse(200, { received: true, updated: true });
   } catch (err) {
     console.error('Unexpected error handling webhook:', err);
-    return res.status(500).json({ error: 'Unexpected server error.' });
+    return jsonResponse(500, { error: 'Unexpected server error.' });
   }
 }

@@ -20,21 +20,22 @@
 // how much of a donation actually reaches the campaign after payment
 // processing costs.
 
-export default async function handler(req, res) {
+import { jsonResponse } from '../lib/http.js';
+
+export default async function handler(req, env) {
   if (req.method !== 'GET') {
-    res.setHeader('Allow', ['GET']);
-    return res.status(405).json({ error: 'Method not allowed' });
+    return jsonResponse(405, { error: 'Method not allowed' }, { Allow: 'GET' });
   }
 
-  const SUPABASE_URL = (process.env.SUPABASE_URL || '').replace(/\/+$/, '');
-  const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  const SUPABASE_URL = (env.SUPABASE_URL || '').replace(/\/+$/, '');
+  const SUPABASE_SERVICE_ROLE_KEY = env.SUPABASE_SERVICE_ROLE_KEY;
   if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
-    return res.status(500).json({ error: 'Server is missing Supabase configuration.' });
+    return jsonResponse(500, { error: 'Server is missing Supabase configuration.' });
   }
 
   const fundraiserId = req.query.id;
   if (!fundraiserId) {
-    return res.status(400).json({ error: 'A campaign id is required.' });
+    return jsonResponse(400, { error: 'A campaign id is required.' });
   }
 
   // Cap how many rows can be requested at once, and default to 10
@@ -58,7 +59,7 @@ export default async function handler(req, res) {
 
     if (!response.ok) {
       console.error('Supabase error:', await response.text());
-      return res.status(500).json({ error: 'Failed to load recent donations.' });
+      return jsonResponse(500, { error: 'Failed to load recent donations.' });
     }
 
     const rows = await response.json();
@@ -83,9 +84,9 @@ export default async function handler(req, res) {
       created_at: row.created_at,
     }));
 
-    return res.status(200).json({ donations });
+    return jsonResponse(200, { donations });
   } catch (err) {
     console.error('Unexpected error in /api/donations:', err);
-    return res.status(500).json({ error: 'Unexpected server error.' });
+    return jsonResponse(500, { error: 'Unexpected server error.' });
   }
 }

@@ -40,7 +40,7 @@
 // in any way — it only ever creates a fundraiser + beneficiary row pair
 // that starts completely inert.
 
-import crypto from 'crypto';
+import { randomHex, randomBase64Url } from '../lib/web-crypto.js';
 import campaignImages from '../lib/campaign-images.js';
 // Destructured once, right here, from the module's single default
 // export — every call site below (uploadCampaignImage(...),
@@ -50,10 +50,11 @@ import campaignImages from '../lib/campaign-images.js';
 const { uploadCampaignImage, deleteCampaignImage } = campaignImages;
 import { insertBeneficiary } from '../lib/beneficiary.js';
 import { sendSubmissionReceivedEmail } from '../lib/email.js';
+import { jsonResponse } from '../lib/http.js';
 
-function getSupabaseConfig() {
-  const SUPABASE_URL = (process.env.SUPABASE_URL || '').replace(/\/+$/, '');
-  const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+function getSupabaseConfig(env) {
+  const SUPABASE_URL = (env.SUPABASE_URL || '').replace(/\/+$/, '');
+  const SUPABASE_SERVICE_ROLE_KEY = env.SUPABASE_SERVICE_ROLE_KEY;
   return { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY };
 }
 
@@ -76,7 +77,7 @@ function generateSlug(patientName) {
     .trim()
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/(^-|-$)/g, '');
-  const randomSuffix = crypto.randomBytes(5).toString('hex');
+  const randomSuffix = randomHex(5);
   return `${base || 'patient'}-${randomSuffix}`;
 }
 
@@ -87,7 +88,7 @@ function generateSlug(patientName) {
 // crypto module. Knowing this exact string is what grants access to
 // /track.html?token=..., so it must be unguessable.
 function generateTrackingToken() {
-  return crypto.randomBytes(32).toString('base64url');
+  return randomBase64Url(32);
 }
 
 // Short, non-sensitive reference code included in error responses so a
@@ -97,7 +98,7 @@ function generateTrackingToken() {
 // without ever putting that raw detail into the public HTTP response
 // itself, which could otherwise leak internal schema/query details.
 function makeErrorRef() {
-  return crypto.randomBytes(4).toString('hex');
+  return randomHex(4);
 }
 
 // Uniform stage-labeled logger, per the four stages this endpoint can
@@ -123,7 +124,7 @@ function logStage(stage, message, details) {
 // 'pending' campaign behind with no beneficiary and no record that
 // cleanup had failed. This version checks response.ok explicitly and
 // reports the real outcome.
-async function rollbackCampaign(SUPABASE_URL, headers, campaignId, imageUrl, ref) {
+async function rollbackCampaign(env, SUPABASE_URL, headers, campaignId, imageUrl, ref) {
   let campaignDeleted = false;
   try {
     const deleteRes = await fetch(`${SUPABASE_URL}/rest/v1/fundraiser?id=eq.${campaignId}`, {
@@ -149,7 +150,7 @@ async function rollbackCampaign(SUPABASE_URL, headers, campaignId, imageUrl, ref
   }
 
   if (campaignDeleted && imageUrl) {
-    const cleanup = await deleteCampaignImage(imageUrl);
+    const cleanup = await deleteCampaignImage(imageUrl, env);
     if (!cleanup.skipped && !cleanup.deleted) {
       logStage(
         'rollback',
@@ -162,15 +163,14 @@ async function rollbackCampaign(SUPABASE_URL, headers, campaignId, imageUrl, ref
   return { campaignDeleted };
 }
 
-export default async function handler(req, res) {
+export default async function handler(req, env) {
   if (req.method !== 'POST') {
-    res.setHeader('Allow', ['POST']);
-    return res.status(405).json({ error: 'Method not allowed' });
+    return jsonResponse(405, { error: 'Method not allowed' }, { Allow: 'POST' });
   }
 
-  const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = getSupabaseConfig();
+  const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = getSupabaseConfig(env);
   if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
-    return res.status(500).json({ error: 'Server is missing Supabase configuration.' });
+    return jsonResponse(500, { error: 'Server is missing Supabase configuration.' });
   }
   const headers = supabaseHeaders(SUPABASE_SERVICE_ROLE_KEY);
 
@@ -180,19 +180,19 @@ export default async function handler(req, res) {
   const patientName = (body.patient_name || '').trim();
   if (!patientName) {
     logStage('validation', 'Rejected — missing patient_name.');
-    return res.status(400).json({ error: 'Patient name is required.' });
+    return jsonResponse(400, { error: 'Patient name is required.' });
   }
 
   const goalAmount = Number(body.goal_amount);
   if (!Number.isFinite(goalAmount) || goalAmount <= 0) {
     logStage('validation', 'Rejected — invalid goal_amount.', body.goal_amount);
-    return res.status(400).json({ error: 'A valid fundraising goal is required.' });
+    return jsonResponse(400, { error: 'A valid fundraising goal is required.' });
   }
 
   const phoneNumber = (body.phone_number || '').trim();
   if (!phoneNumber) {
     logStage('validation', 'Rejected — missing phone_number.');
-    return res.status(400).json({ error: 'A primary contact phone number is required.' });
+    return jsonResponse(400, { error: 'A primary contact phone number is required.' });
   }
   const secondaryPhoneNumber = (body.secondary_phone_number || '').trim() || null;
 
@@ -206,12 +206,12 @@ export default async function handler(req, res) {
   const submitterName = (body.submitter_name || '').trim();
   if (!submitterName) {
     logStage('validation', 'Rejected — missing submitter_name.');
-    return res.status(400).json({ error: 'Your full name is required.' });
+    return jsonResponse(400, { error: 'Your full name is required.' });
   }
   const submitterPhone = (body.submitter_phone || '').trim();
   if (!submitterPhone) {
     logStage('validation', 'Rejected — missing submitter_phone.');
-    return res.status(400).json({ error: 'A contact phone number is required.' });
+    return jsonResponse(400, { error: 'A contact phone number is required.' });
   }
   const submitterEmail = (body.submitter_email || '').trim() || null;
 
@@ -228,7 +228,7 @@ export default async function handler(req, res) {
       hasBankCode: !!bankCode,
       hasAccountNumber: !!accountNumber,
     });
-    return res.status(400).json({
+    return jsonResponse(400, {
       error: 'Beneficiary name, bank, and account number are all required so the campaign can be reviewed.',
     });
   }
@@ -241,7 +241,7 @@ export default async function handler(req, res) {
   // directly to this API could skip the browser entirely.
   if (!body.fileBase64 || !body.contentType) {
     logStage('validation', 'Rejected — missing patient photo (fileBase64/contentType).');
-    return res.status(400).json({ error: 'Please upload a photo of the patient before submitting this campaign.' });
+    return jsonResponse(400, { error: 'Please upload a photo of the patient before submitting this campaign.' });
   }
 
   // ---- Photo upload ----
@@ -264,16 +264,16 @@ export default async function handler(req, res) {
         `ref=${ref} uploadCampaignImage is not available as a function (got: ${typeof uploadCampaignImage}). ` +
           `This points to a stale/partial deployment of lib/campaign-images.js — redeploy with the build cache cleared.`
       );
-      return res.status(500).json({
+      return jsonResponse(500, {
         error: 'Photo upload is temporarily unavailable. Please try again shortly, or contact support with the reference code below.',
         reference: ref,
       });
     }
 
-    const uploadResult = await uploadCampaignImage(body.fileBase64, body.contentType);
+    const uploadResult = await uploadCampaignImage(body.fileBase64, body.contentType, env);
     if (!uploadResult.ok) {
       logStage('image upload', `Failed — HTTP ${uploadResult.status || 500}.`, uploadResult.error);
-      return res.status(uploadResult.status || 500).json({ error: uploadResult.error });
+      return jsonResponse(uploadResult.status || 500, { error: uploadResult.error });
     }
     imageUrl = uploadResult.url;
   }
@@ -343,7 +343,7 @@ export default async function handler(req, res) {
       lastErrorText
     );
     if (imageUrl) {
-      const cleanup = await deleteCampaignImage(imageUrl);
+      const cleanup = await deleteCampaignImage(imageUrl, env);
       if (!cleanup.skipped && !cleanup.deleted) {
         logStage(
           'fundraiser insert',
@@ -356,7 +356,7 @@ export default async function handler(req, res) {
     // caller — it can contain internal column/constraint names. Send a
     // safe reference code instead; the full detail is in the server log
     // line above (`ref=${ref}`) for a developer/admin to look up.
-    return res.status(500).json({
+    return jsonResponse(500, {
       error: 'Something went wrong saving your submission. Please try again, or contact support with the reference code below.',
       reference: ref,
     });
@@ -386,7 +386,7 @@ export default async function handler(req, res) {
       `ref=${ref} Failed to create beneficiary for fundraiser ${campaign.id} — rolling back the campaign. Full Supabase response body follows.`,
       beneficiaryResult.error
     );
-    const rollbackOutcome = await rollbackCampaign(SUPABASE_URL, headers, campaign.id, imageUrl, ref);
+    const rollbackOutcome = await rollbackCampaign(env, SUPABASE_URL, headers, campaign.id, imageUrl, ref);
     if (!rollbackOutcome.campaignDeleted) {
       logStage(
         'beneficiary insert',
@@ -396,7 +396,7 @@ export default async function handler(req, res) {
     // Same reasoning as the fundraiser-insert failure above: a safe
     // reference code goes to the visitor, the raw Supabase error and the
     // rollback outcome are both in the server log next to `ref=${ref}`.
-    return res.status(500).json({
+    return jsonResponse(500, {
       error: 'Something went wrong saving your payout details. Please try again, or contact support with the reference code below.',
       reference: ref,
     });
@@ -415,7 +415,7 @@ export default async function handler(req, res) {
         submitterName,
         patientName: campaign.patient_name,
         trackingToken,
-      });
+      }, env);
       if (!emailResult.ok && !emailResult.skipped) {
         logStage('email', `Submission-received email failed to send for fundraiser ${campaign.id}.`, emailResult.error);
       }
@@ -427,7 +427,7 @@ export default async function handler(req, res) {
     }
   }
 
-  return res.status(201).json({
+  return jsonResponse(201, {
     success: true,
     message: 'Thank you! Your campaign has been submitted and is pending review by our team.',
     trackingUrl: `/track.html?token=${encodeURIComponent(trackingToken)}`,

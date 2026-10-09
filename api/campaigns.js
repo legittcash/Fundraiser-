@@ -23,21 +23,21 @@
 // ordering behave exactly as before.
 
 import { fetchAllRows } from '../lib/supabase-paging.js';
+import { jsonResponse } from '../lib/http.js';
 
 // How many campaigns each "Load more" page returns. 24 divides evenly into
 // the 2, 3 and 4 column homepage layouts, so rows are never left ragged.
 const PAGE_SIZE = 24;
 
-export default async function handler(req, res) {
+export default async function handler(req, env) {
   if (req.method !== 'GET') {
-    res.setHeader('Allow', ['GET']);
-    return res.status(405).json({ error: 'Method not allowed' });
+    return jsonResponse(405, { error: 'Method not allowed' }, { Allow: 'GET' });
   }
 
-  const SUPABASE_URL = (process.env.SUPABASE_URL || '').replace(/\/+$/, '');
-  const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  const SUPABASE_URL = (env.SUPABASE_URL || '').replace(/\/+$/, '');
+  const SUPABASE_SERVICE_ROLE_KEY = env.SUPABASE_SERVICE_ROLE_KEY;
   if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
-    return res.status(500).json({ error: 'Server is missing Supabase configuration.' });
+    return jsonResponse(500, { error: 'Server is missing Supabase configuration.' });
   }
 
   const search = (req.query.search || '').trim();
@@ -71,7 +71,7 @@ export default async function handler(req, res) {
       );
       if (!response.ok) {
         console.error('Supabase error:', await response.text());
-        return res.status(500).json({ error: 'Failed to load campaigns.' });
+        return jsonResponse(500, { error: 'Failed to load campaigns.' });
       }
       const rows = await response.json();
       hasMore = rows.length > PAGE_SIZE;
@@ -80,7 +80,7 @@ export default async function handler(req, res) {
       const result = await fetchAllRows(url, supabaseHeaders);
       if (!result.ok) {
         console.error('Supabase error:', result.errorText);
-        return res.status(500).json({ error: 'Failed to load campaigns.' });
+        return jsonResponse(500, { error: 'Failed to load campaigns.' });
       }
       campaigns = result.rows;
     }
@@ -120,11 +120,11 @@ export default async function handler(req, res) {
       beneficiary_verified: verifiedIds.has(c.id),
     }));
     if (pageParam !== undefined) {
-      return res.status(200).json({ campaigns: campaignsWithBadge, has_more: hasMore });
+      return jsonResponse(200, { campaigns: campaignsWithBadge, has_more: hasMore });
     }
-    return res.status(200).json({ campaigns: campaignsWithBadge });
+    return jsonResponse(200, { campaigns: campaignsWithBadge });
   } catch (err) {
     console.error('Unexpected error in /api/campaigns:', err);
-    return res.status(500).json({ error: 'Unexpected server error.' });
+    return jsonResponse(500, { error: 'Unexpected server error.' });
   }
 }
