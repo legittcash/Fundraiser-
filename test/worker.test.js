@@ -4,6 +4,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
+import fs from 'node:fs';
 import worker from '../src/index.js';
 
 const ENV = {
@@ -366,4 +367,15 @@ test('admin: banks route uses Paystack with secret key; PATCH approval triggers 
   const mail = calls.find((c) => c.url.includes('resend.com'));
   assert.ok(mail, 'approved email sent');
   assert.match(JSON.parse(mail.init.body).html, /kodep\.example\/campaign\.html\?slug=ada/);
+});
+
+test('wrangler.jsonc: worker name, entry, ./public assets with ASSETS binding', () => {
+  const raw = fs.readFileSync(new URL('../wrangler.jsonc', import.meta.url), 'utf8');
+  const cfg = JSON.parse(raw.replace(/^\s*\/\/.*$/gm, ''));
+  assert.equal(cfg.name, 'fundraiser');
+  assert.equal(cfg.main, 'src/index.js');
+  assert.equal(cfg.assets.directory, './public');
+  assert.equal(cfg.assets.binding, 'ASSETS');
+  assert.deepEqual(cfg.assets.run_worker_first, ['/api/*']);
+  assert.ok(fs.existsSync(new URL('../public/index.html', import.meta.url)));
 });
