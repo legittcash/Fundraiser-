@@ -1,0 +1,12 @@
+# Copy this file to ".dev.vars" for LOCAL testing with `npm run dev`.
+# ".dev.vars" is git-ignored — never commit it, and never put real
+# production secrets in this example file.
+SUPABASE_URL=https://YOUR-PROJECT.supabase.co
+SUPABASE_SERVICE_ROLE_KEY=
+PAYSTACK_SECRET_KEY=
+ADMIN_USERNAME=
+ADMIN_PASSWORD=
+ADMIN_SESSION_SECRET=
+RESEND_API_KEY=
+RESEND_FROM_EMAIL=KODEP <onboarding@resend.dev>
+SITE_URL=http://localhost:8787
