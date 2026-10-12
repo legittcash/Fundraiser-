@@ -1,0 +1,18 @@
+# Safety net: if Wrangler is ever pointed at the repo root as the asset
+# directory, none of this may be uploaded as a public website file.
+node_modules
+.git
+.wrangler
+.dev.vars
+.dev.vars.*
+.env
+src
+api
+lib
+test
+*.sql
+*.md
+*.json
+*.jsonc
+.gitignore
+.assetsignore
