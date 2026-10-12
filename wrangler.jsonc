@@ -4,9 +4,12 @@
   // and secrets") for how to set them with `wrangler secret put` or in the
   // Cloudflare dashboard.
   "$schema": "./node_modules/wrangler/config-schema.json",
-  "name": "kodep-fundraiser",
+  "name": "fundraiser",
   "main": "src/index.js",
   "compatibility_date": "2026-09-01",
+
+  // Only ./public is ever uploaded as public assets. Never change this to
+  // "." — that would publish node_modules, source, tests and config.
 
   // Static website (HTML/CSS/JS) lives in ./public. The Worker only runs
   // first for /api/* — everything else is served straight from the assets.

@@ -7,10 +7,12 @@
   },
   "scripts": {
     "dev": "wrangler dev",
+    "preview": "wrangler dev",
     "deploy": "wrangler deploy",
+    "check": "wrangler deploy --dry-run --outdir .wrangler/dry-run",
     "test": "node --test test/worker.test.js"
   },
   "devDependencies": {
-    "wrangler": "^4.0.0"
+    "wrangler": "4.149.0"
   }
 }

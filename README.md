@@ -69,7 +69,7 @@ The frontend needs **no** Paystack public key: checkout is a redirect to the
 | `ADMIN_SESSION_SECRET` | **secret** | yes | Long random string; signs the admin cookie. |
 | `RESEND_API_KEY` | **secret** | for email | If missing, emails are skipped (as before). |
 | `RESEND_FROM_EMAIL` | variable | optional | Defaults to `KODEP <onboarding@resend.dev>`. |
-| `SITE_URL` | variable | recommended | Public site URL used in email links, e.g. `https://kodep-fundraiser.<your-subdomain>.workers.dev`. If unset it falls back to the old Vercel URL baked into `lib/email.js`, so **set it**. |
+| `SITE_URL` | variable | recommended | Public site URL used in email links, e.g. `https://fundraiser.<your-subdomain>.workers.dev`. If unset it falls back to the old Vercel URL baked into `lib/email.js`, so **set it**. |
 
 Safe to be public (not secret): `SUPABASE_URL`, `RESEND_FROM_EMAIL`, `SITE_URL`.
 Everything else must be entered as a Cloudflare **secret**. Do not paste
@@ -96,9 +96,9 @@ from wiping them).
 1. Push the `cloudflare-migration` branch to GitHub.
 2. Cloudflare dashboard → **Workers & Pages → Create → Import a repository**
    and choose the repo. Worker name must match `"name"` in `wrangler.jsonc`
-   (`kodep-fundraiser`).
+   (`fundraiser`).
 3. Production branch: `cloudflare-migration` (leave `main` alone). Build
-   command: *(empty)*. Deploy command: `npx wrangler deploy`.
+   command: *(empty)*. Deploy command: `npm run deploy`.
 4. After the first deploy, open **Settings → Variables and Secrets** and add
    everything in the table above, then redeploy (or run `npx wrangler deploy`).
 5. Optional: add your custom domain under **Settings → Domains & Routes**, and
