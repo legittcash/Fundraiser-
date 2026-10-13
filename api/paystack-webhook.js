@@ -187,6 +187,17 @@ export default async function handler(request, env) {
   // separate "settle this donation" call that could be duplicated.
   const settledToSubaccount = event.data.metadata?.subaccount_code || null;
 
+  // IMPORTANT: this figure is the beneficiary's EXPECTED SHARE of the
+  // donation as calculated by Paystack at charge time. It is NOT proof that
+  // any money has been paid out. This webhook never marks a payout as
+  // settled: donations.payout_status starts as 'pending_payout' (set by a
+  // database trigger on insert) and can only be advanced by the admin
+  // "Check payouts" action using Paystack's Settlement API
+  // (api/admin/beneficiaries.js route=reconcile-payouts). Paystack sends no
+  // webhook for settlements. A repeated delivery of this event is a no-op
+  // (UNIQUE paystack_reference + ON CONFLICT DO NOTHING) and the trigger
+  // only fires on a genuine first insert, so it can never change a status.
+  //
   // ACTUAL amount Paystack sent to the beneficiary's subaccount for THIS
   // transaction, taken from Paystack's own charge.success payload:
   // event.data.fees_split.subaccount, in kobo (Paystack's transaction
