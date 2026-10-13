@@ -31,6 +31,36 @@ Cloudflare Workers  (one Worker, one URL)
 * `src/index.js` is a small pathname router. It maps each `/api/...` URL to the
   same handler file the Vercel version used. **No API URL was changed.**
 
+## Payment status vs. beneficiary payout status (read this)
+
+A successful donation means **the payment was received**. It does **not** mean
+the beneficiary has been paid.
+
+* `donations.settled_amount` is the beneficiary's **expected share**, copied
+  from Paystack's `fees_split.subaccount` when the charge succeeds. It is not
+  proof of a payout.
+* `donations.payout_status` is the real payout state: `not_applicable` (no
+  subaccount used), `pending_payout` (default for split donations),
+  `processing`, `settled`, `failed`.
+* Only `settled` counts as **"Amount Settled"** (public campaign page, admin
+  totals). It is set only by the admin **Check payouts** button
+  (`route=reconcile-payouts`), which uses Paystack's Settlement API
+  (`GET /settlement?subaccount=<id>` and `GET /settlement/:id/transactions`): a
+  donation becomes `settled` only when its reference is inside a settlement
+  whose status is `success`. The webhook never sets it, and Paystack sends no
+  settlement webhook.
+* **Paystack subaccount verification cannot be done through the API.** Paystack
+  documents no endpoint or parameter for it. KODEP reads Paystack's own
+  `is_verified` flag (Fetch Subaccount) and shows it separately from KODEP's own
+  verification. If it is `false`, verify the subaccount in the Paystack
+  Dashboard, then press **Refresh Paystack status**.
+* Run `supabase-payout-status.sql` once, **before** deploying this version. Older
+  donations that used to show as settled are kept, flagged
+  `payout_legacy_unconfirmed`, and shown as pending until Paystack confirms them.
+* Not verified against live Paystack: the exact shape of settlement transaction
+  lists. The Check payouts button therefore shows a preview and needs a second
+  tap to save.
+
 | URL | Handler |
 |---|---|
 | `/api/campaign` | `api/campaign.js` |
