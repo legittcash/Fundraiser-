@@ -379,3 +379,218 @@ test('wrangler.jsonc: worker name, entry, ./public assets with ASSETS binding', 
   assert.deepEqual(cfg.assets.run_worker_first, ['/api/*']);
   assert.ok(fs.existsSync(new URL('../public/index.html', import.meta.url)));
 });
+
+// =====================================================================
+// Payout status / Paystack subaccount verification
+// =====================================================================
+import { canMovePayoutStatus, payoutStatusFromSettlement } from '../lib/payout-status.js';
+import { getAmountSettled, getPayoutBreakdown } from '../lib/amount-settled.js';
+
+const adminHeaders = async () => ({ cookie: (await login()).split(';')[0], 'content-type': 'application/json' });
+const patchesTo = (table) => calls.filter((c) => c.init.method === 'PATCH' && c.url.includes('/rest/v1/' + table));
+const BEN = { fundraiser_id: 7, beneficiary_name: 'Ada', bank_code: '058', account_number: '0123456789', settlement_percentage: 0, verification_status: 'pending', paystack_subaccount_code: null };
+
+test('scenario 1: a new subaccount is created UNVERIFIED and recorded as such (KODEP never claims Paystack verified it)', async () => {
+  const h = await adminHeaders();
+  calls = [];
+  mock = (url, init) => {
+    const m = init.method || 'GET';
+    if (url.startsWith('https://api.paystack.co/bank/resolve')) return Response.json({ status: true, data: { account_name: 'ADA O', account_number: '0123456789' } });
+    if (url === 'https://api.paystack.co/subaccount' && m === 'POST') return Response.json({ status: true, data: { subaccount_code: 'ACCT_new', id: 77, is_verified: false, active: true } });
+    if (url.includes('/beneficiaries?fundraiser_id=eq.7') && m === 'GET') return Response.json([BEN]);
+    if (url.includes('/beneficiaries?fundraiser_id=eq.7') && m === 'PATCH') return Response.json([{ ...BEN, verification_status: 'verified', paystack_subaccount_code: 'ACCT_new', account_name: 'ADA O' }]);
+    return Response.json([]);
+  };
+  const r = await call('/api/admin/beneficiaries?route=verify', { method: 'POST', headers: h, body: JSON.stringify({ fundraiser_id: 7 }) });
+  assert.equal(r.status, 200, await r.clone().text());
+  const b = (await r.json()).beneficiary;
+  assert.equal(b.verification_status, 'verified');         // KODEP's own check
+  assert.equal(b.paystack_is_verified, false);              // Paystack's flag, as reported
+  assert.equal(b.paystack_subaccount_id, 77);
+  const saved = patchesTo('beneficiaries').map((c) => JSON.parse(c.init.body)).find((x) => 'paystack_is_verified' in x);
+  assert.equal(saved.paystack_is_verified, false);
+  // Only documented Paystack calls were made: resolve + create. No made-up "verify" call.
+  const ps = calls.filter((c) => c.url.startsWith('https://api.paystack.co')).map((c) => (c.init.method || 'GET') + ' ' + new URL(c.url).pathname);
+  assert.deepEqual(ps, ['GET /bank/resolve', 'POST /subaccount']);
+});
+
+test('scenario 2: locally verified but Paystack still unverified stays unverified; unchecked is never shown as verified', async () => {
+  const h = await adminHeaders();
+  const local = { ...BEN, verification_status: 'verified', paystack_subaccount_code: 'ACCT_new', paystack_subaccount_id: 77 };
+  calls = [];
+  mock = (url, init) => {
+    const m = init.method || 'GET';
+    if (url === 'https://api.paystack.co/subaccount/ACCT_new') return Response.json({ status: true, data: { id: 77, is_verified: false, active: true } });
+    if (url.includes('/beneficiaries?fundraiser_id=eq.7') && m === 'GET') return Response.json([local]);
+    return Response.json([]);
+  };
+  const r = await call('/api/admin/beneficiaries?route=paystack-status', { method: 'POST', headers: h, body: JSON.stringify({ fundraiser_id: 7 }) });
+  const b = (await r.json()).beneficiary;
+  assert.equal(b.verification_status, 'verified');
+  assert.equal(b.paystack_is_verified, false);
+
+  // Paystack later reports true -> recorded as true.
+  mock = (url, init) => url === 'https://api.paystack.co/subaccount/ACCT_new'
+    ? Response.json({ status: true, data: { id: 77, is_verified: true, active: true } })
+    : (url.includes('/beneficiaries?fundraiser_id=eq.7') && (init.method || 'GET') === 'GET' ? Response.json([local]) : Response.json([]));
+  assert.equal((await (await call('/api/admin/beneficiaries?route=paystack-status', { method: 'POST', headers: h, body: JSON.stringify({ fundraiser_id: 7 }) })).json()).beneficiary.paystack_is_verified, true);
+
+  // Summary list: a locally verified beneficiary that was never checked is null, not true.
+  mock = (url) => url.includes('/beneficiaries?select=') ? Response.json([{ fundraiser_id: 7, verification_status: 'verified', settlement_enabled: true, paystack_subaccount_code: 'ACCT_new', account_number: '0123456789' }]) : Response.json([]);
+  const sum = await (await call('/api/admin/beneficiaries?all=1', { headers: h })).json();
+  assert.equal(sum.beneficiaries[0].paystack_is_verified, null);
+  assert.equal(sum.beneficiaries[0].has_subaccount, true);
+  assert.equal(sum.beneficiaries[0].account_number_masked, '••••6789');
+  assert.equal(JSON.stringify(sum).includes('0123456789'), false);
+});
+
+test('scenario 3: a successful donation never sets a payout status or counts as settled', async () => {
+  mock = (url) => url.includes('/rpc/record_donation_and_update_totals') ? Response.json([{ is_duplicate: false }]) : Response.json([{ id: 'c1' }]);
+  const body = chargeEvent();
+  assert.equal((await hook(body, { 'x-paystack-signature': sig(body) })).status, 200);
+  const rpc = JSON.parse(calls.find((c) => c.url.includes('/rpc/record_donation_and_update_totals')).init.body);
+  assert.equal(Object.keys(rpc).some((k) => /payout|settled_status|paid/i.test(k)), false);
+  assert.equal(patchesTo('donations').length, 0);
+  // The database starts every new split donation as pending_payout (trigger), not settled.
+  const sql = fs.readFileSync(new URL('../supabase-payout-status.sql', import.meta.url), 'utf8');
+  assert.match(sql, /new\.payout_status := 'pending_payout'/);
+  assert.doesNotMatch(sql, /new\.payout_status := 'settled'/);
+
+  // Public "Amount Settled" only ever sums CONFIRMED rows (fallback query shown; RPC missing).
+  calls = [];
+  mock = (url) => url.includes('/rpc/') ? new Response('{}', { status: 404 }) : Response.json([]);
+  assert.equal(await getAmountSettled('https://x.supabase.co', {}, 5), 0);
+  const q = calls.find((c) => c.url.includes('/rest/v1/donations')).url;
+  assert.match(q, /payout_status=eq\.settled/);
+});
+
+test('scenario 4: the same webhook delivered twice is processed once and changes nothing the second time', async () => {
+  let n = 0;
+  mock = (url) => url.includes('/rpc/record_donation_and_update_totals') ? Response.json([{ is_duplicate: n++ > 0 }]) : Response.json([{ id: 'c1' }]);
+  const body = chargeEvent();
+  const first = await (await hook(body, { 'x-paystack-signature': sig(body) })).json();
+  const second = await (await hook(body, { 'x-paystack-signature': sig(body) })).json();
+  assert.deepEqual(first, { received: true, updated: true });
+  assert.deepEqual(second, { received: true, duplicate: true });
+  assert.equal(patchesTo('donations').length + patchesTo('fundraiser').length, 0); // nothing updated outside the atomic RPC
+  // A forged / unsigned replay is rejected before any database call.
+  calls = [];
+  assert.equal((await hook(body, { 'x-paystack-signature': 'bad' })).status, 401);
+  assert.equal(calls.length, 0);
+});
+
+function reconcileMock({ settlements, txBySettlement, candidates, ben = {}, patchReturns = (ids) => ids.map((id) => ({ id })) }) {
+  const beneficiary = { ...BEN, verification_status: 'verified', paystack_subaccount_code: 'ACCT_new', paystack_subaccount_id: 77, ...ben };
+  return (url, init) => {
+    const m = init.method || 'GET';
+    if (url.includes('/beneficiaries?fundraiser_id=eq.7')) return Response.json([beneficiary]);
+    if (url.includes('/rest/v1/donations?select=id,paystack_reference')) return Response.json(candidates);
+    if (url.startsWith('https://api.paystack.co/settlement?')) return Response.json({ status: true, data: settlements, meta: { pageCount: 1 } });
+    const t = url.match(/settlement\/(\d+)\/transactions/);
+    if (t) return Response.json({ status: true, data: (txBySettlement[t[1]] || []).map((reference) => ({ reference })), meta: { pageCount: 1 } });
+    if (m === 'PATCH' && url.includes('/rest/v1/donations')) {
+      const ids = url.match(/id=in\.\(([\d,]+)\)/)[1].split(',').map(Number);
+      return Response.json(patchReturns(ids));
+    }
+    return Response.json([]);
+  };
+}
+const cands = [
+  { id: 1, paystack_reference: 'ref-a', payout_status: 'pending_payout', created_at: '2026-10-01T10:00:00Z' },
+  { id: 2, paystack_reference: 'ref-b', payout_status: 'pending_payout', created_at: '2026-10-02T10:00:00Z' },
+];
+const reconcile = async (apply) => {
+  const h = await adminHeaders();
+  return call('/api/admin/beneficiaries?route=reconcile-payouts', { method: 'POST', headers: h, body: JSON.stringify({ fundraiser_id: 7, apply }) });
+};
+
+test('scenario 5: payout confirmed by a successful Paystack settlement -> preview changes nothing, apply marks settled with evidence', async () => {
+  calls = [];
+  mock = reconcileMock({ settlements: [{ id: 900, status: 'success', settlement_date: '2026-10-12T00:00:00Z' }], txBySettlement: { 900: ['ref-a'] }, candidates: cands });
+  const pre = await (await reconcile(false)).json();
+  assert.equal(pre.mode, 'preview');
+  assert.deepEqual(pre.will_change, { settled: 1, processing: 0, failed: 0 });
+  assert.equal(pre.unmatched, 1); // ref-b stays pending
+  assert.equal(patchesTo('donations').length, 0);
+  assert.ok(calls.some((c) => c.url.includes('/settlement?subaccount=77')), 'filtered by the beneficiary subaccount id');
+
+  calls = [];
+  const done = await (await reconcile(true)).json();
+  assert.equal(done.applied, 1);
+  const [p] = patchesTo('donations');
+  assert.match(p.url, /id=in\.\(1\)&payout_status=in\.\(pending_payout,processing,failed\)/); // conditional: never touches already-settled rows
+  assert.deepEqual(JSON.parse(p.init.body), {
+    payout_status: 'settled', payout_status_updated_at: JSON.parse(p.init.body).payout_status_updated_at,
+    payout_settlement_id: '900', payout_settlement_date: '2026-10-12T00:00:00Z', payout_confirmed_via: 'paystack_settlement_api',
+  });
+});
+
+test('scenario 6: failed / pending settlements are reported as failed / processing, never settled; unknown statuses and unmatched donations stay pending', async () => {
+  calls = [];
+  mock = reconcileMock({
+    settlements: [{ id: 901, status: 'failed' }, { id: 902, status: 'pending' }, { id: 903, status: 'mystery' }],
+    txBySettlement: { 901: ['ref-a'], 902: ['ref-b'], 903: ['ref-a', 'ref-b'] },
+    candidates: cands,
+  });
+  const pre = await (await reconcile(false)).json();
+  assert.deepEqual(pre.will_change, { settled: 0, processing: 1, failed: 1 });
+  assert.equal(pre.unmatched, 0);
+
+  // Nothing found at Paystack at all -> everything remains Pending payout.
+  calls = [];
+  mock = reconcileMock({ settlements: [], txBySettlement: {}, candidates: cands });
+  const none = await (await reconcile(true)).json();
+  assert.deepEqual(none.will_change, { settled: 0, processing: 0, failed: 0 });
+  assert.equal(none.unmatched, 2);
+  assert.equal(patchesTo('donations').length, 0);
+
+  // Paystack error -> 502, nothing saved.
+  calls = [];
+  mock = (url, init) => url.startsWith('https://api.paystack.co/settlement?') ? Response.json({ status: false, message: 'boom' }, { status: 500 }) : reconcileMock({ settlements: [], txBySettlement: {}, candidates: cands })(url, init);
+  assert.equal((await reconcile(true)).status, 502);
+  assert.equal(patchesTo('donations').length, 0);
+});
+
+test('scenario 7: historical "settled" records are handled safely (never auto-confirmed, never downgraded, nothing deleted)', async () => {
+  const sql = fs.readFileSync(new URL('../supabase-payout-status.sql', import.meta.url), 'utf8');
+  assert.match(sql, /payout_legacy_unconfirmed = true\s+where payout_status = 'pending_payout' and settled_amount > 0/);
+  assert.doesNotMatch(sql, /payout_status = 'settled'\s*where/i); // no historical row is promoted to settled
+  assert.doesNotMatch(sql, /\b(delete\s+from|drop\s+table|truncate|drop\s+column)\b/i);
+  assert.doesNotMatch(sql, /update donations set settled_amount/i); // original figure preserved
+
+  // State machine: settled is final; pending cannot jump backwards.
+  assert.equal(canMovePayoutStatus('settled', 'failed'), false);
+  assert.equal(canMovePayoutStatus('settled', 'processing'), false);
+  assert.equal(canMovePayoutStatus('not_applicable', 'settled'), false);
+  assert.equal(canMovePayoutStatus('pending_payout', 'settled'), true);
+  assert.equal(canMovePayoutStatus('failed', 'settled'), true);
+  assert.equal(payoutStatusFromSettlement('success'), 'settled');
+  assert.equal(payoutStatusFromSettlement('SUCCESS'), 'settled');
+  assert.equal(payoutStatusFromSettlement('unknown'), null);
+
+  // Only not-yet-settled donations are even considered, and a lost race updates nothing.
+  calls = [];
+  mock = reconcileMock({ settlements: [{ id: 900, status: 'success' }], txBySettlement: { 900: ['ref-a'] }, candidates: cands, patchReturns: () => [] });
+  const r = await (await reconcile(true)).json();
+  assert.equal(r.applied, 0);
+  assert.match(calls.find((c) => c.url.includes('/rest/v1/donations?select=id,paystack_reference')).url, /payout_status=in\.\(pending_payout,processing,failed\)/);
+
+  // Breakdown for the admin keeps old unconfirmed money visibly separate from confirmed payouts.
+  mock = (url) => url.includes('/rpc/admin_payout_breakdown')
+    ? Response.json([{ fundraiser_id: 7, settled: '0', pending: '9650', processing: '0', failed: '0', legacy_unconfirmed: '9650' }])
+    : Response.json([]);
+  const bd = await getPayoutBreakdown('https://x.supabase.co', {}, [7]);
+  assert.deepEqual(bd.byCampaign[7], { settled: 0, pending: 9650, processing: 0, failed: 0, legacy_unconfirmed: 9650 });
+  assert.equal(bd.total.settled, 0);
+  // Migration not run -> unknown (null), never a made-up figure.
+  mock = () => new Response('missing', { status: 404 });
+  assert.equal(await getPayoutBreakdown('https://x.supabase.co', {}, null), null);
+});
+
+test('payout routes require an admin session and a POST', async () => {
+  for (const route of ['reconcile-payouts', 'paystack-status']) {
+    assert.equal((await call('/api/admin/beneficiaries?route=' + route, { method: 'POST', body: '{}', headers: { 'content-type': 'application/json' } })).status, 401);
+    const h = await adminHeaders();
+    assert.equal((await call('/api/admin/beneficiaries?route=' + route, { headers: h })).status, 405);
+  }
+});
