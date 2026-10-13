@@ -56,7 +56,7 @@ import campaignImages from '../../lib/campaign-images.js';
 // that file for why.
 const { uploadCampaignImage, deleteCampaignImage } = campaignImages;
 import { insertBeneficiary } from '../../lib/beneficiary.js';
-import { getSettledTotalsByCampaign, getSettledForCampaigns } from '../../lib/amount-settled.js';
+import { getSettledTotalsByCampaign, getSettledForCampaigns, getPayoutBreakdown } from '../../lib/amount-settled.js';
 import { fetchAllRows, callRpc } from '../../lib/supabase-paging.js';
 import { sendCampaignApprovedEmail, sendCampaignRejectedEmail } from '../../lib/email.js';
 import { jsonResponse } from '../../lib/http.js';
@@ -212,10 +212,20 @@ async function handleAnalytics(req, env, { SUPABASE_URL, SUPABASE_SERVICE_ROLE_K
     // dashboard), we fall back to fetching donations and fundraiser names
     // as two separate, simpler requests and merging them in JS.
     let recentDonations = [];
-    const recentRes = await fetch(
-      `${SUPABASE_URL}/rest/v1/donations?select=id,amount,paystack_fee,platform_fee,net_amount,donor_name,donor_email,anonymous,created_at,fundraiser:fundraiser_id(patient_name)&order=created_at.desc&limit=10`,
+    // payout_status exists only after supabase-payout-status.sql; if that
+    // column is missing the request fails and the original column list is
+    // used instead, so the dashboard keeps working either way.
+    const recentCols = 'id,amount,paystack_fee,platform_fee,net_amount,donor_name,donor_email,anonymous,created_at';
+    let recentRes = await fetch(
+      `${SUPABASE_URL}/rest/v1/donations?select=${recentCols},payout_status,fundraiser:fundraiser_id(patient_name)&order=created_at.desc&limit=10`,
       { headers }
     );
+    if (!recentRes.ok) {
+      recentRes = await fetch(
+        `${SUPABASE_URL}/rest/v1/donations?select=${recentCols},fundraiser:fundraiser_id(patient_name)&order=created_at.desc&limit=10`,
+        { headers }
+      );
+    }
 
     if (recentRes.ok) {
       recentDonations = await recentRes.json();
@@ -274,12 +284,19 @@ async function handleAnalytics(req, env, { SUPABASE_URL, SUPABASE_SERVICE_ROLE_K
       }
     }
 
-    // Total Amount Settled across all campaigns (SUM of
-    // donations.settled_amount). Read separately so the existing totals
+    // Total Amount Settled across all campaigns: CONFIRMED payouts only
+    // (SUM of donations.settled_amount where payout_status = 'settled').
+    // Read separately so the existing totals
     // above are unaffected; null if it could not be read.
     const settledTotals = fastRow ? null : await getSettledTotalsByCampaign(SUPABASE_URL, headers);
 
+    // Expected beneficiary share by REAL payout state (settled = confirmed
+    // paid out; pending/processing/failed = not paid out yet). null if
+    // supabase-payout-status.sql has not been run.
+    const payoutBreakdown = await getPayoutBreakdown(SUPABASE_URL, headers, null);
+
     return jsonResponse(200, {
+      payout_totals: payoutBreakdown ? payoutBreakdown.total : null,
       total_patients: totalPatients,
       active_campaigns: activeCampaigns,
       total_raised: totalRaised,
@@ -383,9 +400,11 @@ async function handlePagedCampaignList(req, env, { SUPABASE_URL, headers, search
 
   // Amount Settled for just the campaigns on this page.
   const settled = await getSettledForCampaigns(SUPABASE_URL, headers, rows.map((c) => c.id));
+  const payout = await getPayoutBreakdown(SUPABASE_URL, headers, rows.map((c) => c.id));
   const campaigns = rows.map((c) => ({
     ...c,
     amount_settled: settled ? settled[c.id] || 0 : null,
+    payout: payout ? payout.byCampaign[c.id] || { settled: 0, pending: 0, processing: 0, failed: 0, legacy_unconfirmed: 0 } : null,
   }));
 
   const body = { campaigns, has_more: hasMore };
@@ -476,9 +495,11 @@ export default async function handler(req, env) {
       // donations.settled_amount). null on every row if it could not be
       // read, so the rest of the list is never affected.
       const settledTotals = await getSettledTotalsByCampaign(SUPABASE_URL, headers);
+      const payoutAll = await getPayoutBreakdown(SUPABASE_URL, headers, null);
       const campaignsWithSettled = campaigns.map((c) => ({
         ...c,
         amount_settled: settledTotals ? settledTotals.byCampaign[c.id] || 0 : null,
+        payout: payoutAll ? payoutAll.byCampaign[c.id] || { settled: 0, pending: 0, processing: 0, failed: 0, legacy_unconfirmed: 0 } : null,
       }));
       return jsonResponse(200, { campaigns: campaignsWithSettled });
     }
