@@ -383,7 +383,7 @@ test('wrangler.jsonc: worker name, entry, ./public assets with ASSETS binding', 
 // =====================================================================
 // Payout status / Paystack subaccount verification
 // =====================================================================
-import { canMovePayoutStatus, payoutStatusFromSettlement } from '../lib/payout-status.js';
+import { canMovePayoutStatus, payoutStatusFromSettlement } from '../lib/payout-evidence.js';
 import { getAmountSettled, getPayoutBreakdown } from '../lib/amount-settled.js';
 
 const adminHeaders = async () => ({ cookie: (await login()).split(';')[0], 'content-type': 'application/json' });
