@@ -38,7 +38,7 @@
 
 import { rejectIfNotAdmin } from '../../lib/admin-auth.js';
 import { listNigerianBanks, resolveAccountNumber, createSubaccount, fetchSubaccount } from '../../lib/paystack.js';
-import { findPayoutEvidence } from '../../lib/payout-status.js';
+import { findPayoutEvidence } from '../../lib/payout-evidence.js';
 import { fetchAllRows } from '../../lib/supabase-paging.js';
 import { jsonResponse } from '../../lib/http.js';
 
