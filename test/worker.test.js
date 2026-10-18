@@ -610,7 +610,7 @@ const pageOf = (data, pageCount = 1) => Response.json({ status: true, message: '
 const DIAG_DONATION = { id: 11, paystack_reference: 'ref-diag-1', payout_status: 'pending_payout', created_at: '2026-10-12T23:27:56.200Z' };
 
 // listFor(hasFrom, page) -> settlements; txFor(settlementId) -> references
-function diagMock({ listFor, txFor = () => [], candidates = [DIAG_DONATION], listError = null }) {
+function diagMock({ listFor, txFor = () => [], txResponse = null, candidates = [DIAG_DONATION], listError = null }) {
   const beneficiary = { ...BEN, verification_status: 'verified', paystack_subaccount_code: 'ACCT_diag', paystack_subaccount_id: 77 };
   return (url, init) => {
     const m = init.method || 'GET';
@@ -622,7 +622,7 @@ function diagMock({ listFor, txFor = () => [], candidates = [DIAG_DONATION], lis
       return pageOf(listFor(q.has('from'), Number(q.get('page'))));
     }
     const t = url.match(/settlement\/(\d+)\/transactions/);
-    if (t) return pageOf(txFor(t[1]).map(txItem));
+    if (t) return txResponse ? txResponse(t[1]) : pageOf(txFor(t[1]).map(txItem));
     if (m === 'PATCH' && url.includes('/rest/v1/donations')) return Response.json([{ id: 11 }]);
     return Response.json([]);
   };
@@ -639,7 +639,8 @@ test('check payouts: beneficiary already settled by Paystack -> preview shows th
   assert.equal(patchesTo('donations').length, 0);
   assert.deepEqual(pre.diagnostics.settlements, [{
     id: '900', status: 'success', settlement_date: '2026-10-14T00:00:00.000Z', recognised: true,
-    transactions_opened: 2, donations_found: 1, complete: true,
+    transactions_opened: 2, transactions_reported: 2, total_amount: 97500, effective_amount: 97500, currency: 'NGN',
+    donations_found: 1, complete: true,
   }]);
   assert.equal(pre.diagnostics.start_date, '2026-10-11');
   assert.equal(pre.diagnostics.start_date_fallback.ran, false, 'everything found in pass 1: no second pass');
@@ -802,4 +803,52 @@ test('check payouts panel: save button only when there is evidence; 0 eligible d
   }));
   assert.doesNotMatch(hostile.html, /<img src=x|<script>x/);
   assert.match(hostile.html, /&lt;img src=x/);
+});
+
+test('check payouts: settlement with an amount but an empty transaction list -> reported, never marked settled', async () => {
+  calls = [];
+  // The live symptom: Paystack lists a successful settlement (amount 97,500 kobo) but its transactions endpoint returns data: [].
+  mock = diagMock({ listFor: () => [settlementItem(12085311, 'success')], txResponse: () => pageOf([]) });
+  const r = await (await reconcile(false)).json();
+  assert.deepEqual(r.will_change, { settled: 0, processing: 0, failed: 0 });
+  assert.equal(r.changes.length, 0);
+  assert.equal(patchesTo('donations').length, 0);
+  const row = r.diagnostics.settlements[0];
+  assert.equal(row.transactions_opened, 0);
+  assert.equal(row.transactions_reported, 0);
+  assert.equal(row.total_amount, 97500);
+  assert.equal(row.effective_amount, 97500);
+  assert.equal(row.complete, true);
+
+  const { renderPayoutCheck } = loadPayoutPanelRenderer();
+  const html = renderPayoutCheck(r).html;
+  assert.match(html, /settlement amount NGN 975\.00/);
+  assert.match(html, /Paystack says it holds 0 transaction\(s\)/);
+  assert.match(html, /with an amount but returned no transactions/);
+  assert.match(html, /Nothing is marked Settled from an amount alone/);
+  assert.doesNotMatch(html, /applyPayoutsBtn/);
+});
+
+test('check payouts: Paystack count above zero but an empty page is visible in the diagnostics', async () => {
+  calls = [];
+  mock = diagMock({
+    listFor: () => [settlementItem(12085312, 'success')],
+    txResponse: () => Response.json({ status: true, message: 'ok', data: [], meta: { total: 3, skipped: 0, perPage: 100, page: 1, pageCount: 1 } }),
+  });
+  const r = await (await reconcile(false)).json();
+  const row = r.diagnostics.settlements[0];
+  assert.equal(row.transactions_opened, 0);
+  assert.equal(row.transactions_reported, 3);
+  assert.equal(r.changes.length, 0);
+  assert.match(loadPayoutPanelRenderer().renderPayoutCheck(r).html, /Paystack says it holds 3 transaction\(s\)/);
+});
+
+test('check payouts: amounts Paystack does not send are null, not invented', async () => {
+  calls = [];
+  const bare = { id: 12085313, status: 'success', settlement_date: '2026-10-14T00:00:00.000Z' };
+  mock = diagMock({ listFor: () => [bare], txFor: () => ['nope'] });
+  const row = (await (await reconcile(false)).json()).diagnostics.settlements[0];
+  assert.equal(row.total_amount, null);
+  assert.equal(row.effective_amount, null);
+  assert.equal(row.currency, null);
 });
