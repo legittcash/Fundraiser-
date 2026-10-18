@@ -2228,11 +2228,23 @@
     for (const r of rows.slice(0, 20)) {
       const when = r.settlement_date ? escapeHtml(String(r.settlement_date).slice(0, 10)) : 'no date';
       const note = !r.recognised ? ' — status not recognised, not used as evidence' : r.complete ? '' : ' — not fully read';
+      const money = (kobo) => (typeof kobo === 'number' ? `${escapeHtml(r.currency || 'NGN')} ${(kobo / 100).toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : null);
+      const amountBits = [];
+      if (money(r.total_amount)) amountBits.push(`settlement amount ${money(r.total_amount)}`);
+      if (money(r.effective_amount) && r.effective_amount !== r.total_amount) amountBits.push(`paid out ${money(r.effective_amount)}`);
+      const reported = typeof r.transactions_reported === 'number' ? ` · Paystack says it holds ${r.transactions_reported} transaction(s)` : '';
       out += `<div class="muted-cell">#${escapeHtml(r.id)} · ${escapeHtml(r.status || 'no status')} · ${when} · ` +
-        `${Number(r.transactions_opened) || 0} transaction(s) opened · ${Number(r.donations_found) || 0} of the donation(s) checked found${note}</div>`;
+        (amountBits.length ? amountBits.join(' · ') + ' · ' : '') +
+        `${Number(r.transactions_opened) || 0} transaction(s) opened${reported} · ${Number(r.donations_found) || 0} of the donation(s) checked found${note}</div>`;
     }
     if ((Number(d.settlements_total) || 0) > rows.length) {
       out += `<div class="muted-cell">…and ${Number(d.settlements_total) - rows.length} more settlement(s) not shown.</div>`;
+    }
+
+    const emptyWithMoney = rows.filter((r) => r.recognised && (Number(r.transactions_opened) || 0) === 0 && ((Number(r.total_amount) || 0) > 0 || (Number(r.transactions_reported) || 0) > 0));
+    if (emptyWithMoney.length) {
+      out += '<div class="muted-cell" style="margin-top:6px;">Paystack lists settlement ' + emptyWithMoney.map((r) => '#' + escapeHtml(r.id)).join(', ') +
+        ' with an amount but returned no transactions for it, so this platform cannot tell which donations it paid. Nothing is marked Settled from an amount alone. Open it in Paystack Dashboard → Payouts to see what it contains; if it lists this donation there, Paystack\'s API is returning an empty list and support can look into it.</div>';
     }
 
     if (listed === 0) {
