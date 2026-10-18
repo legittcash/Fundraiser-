@@ -594,3 +594,212 @@ test('payout routes require an admin session and a POST', async () => {
     assert.equal((await call('/api/admin/beneficiaries?route=' + route, { headers: h })).status, 405);
   }
 });
+
+// =====================================================================
+// "Check payouts" diagnostics (fake references only; no live Paystack)
+// =====================================================================
+import { findPayoutEvidence } from '../lib/payout-evidence.js';
+
+const settlementItem = (id, status) => ({
+  id, domain: 'live', status, currency: 'NGN', integration: 1, total_amount: 97500, effective_amount: 97500,
+  total_fees: 0, total_processed: 97500, deductions: null, settlement_date: '2026-10-14T00:00:00.000Z',
+  settled_by: null, createdAt: '2026-10-14T01:00:00.000Z', updatedAt: '2026-10-14T08:00:00.000Z',
+});
+const txItem = (reference) => ({ id: 1, domain: 'live', status: 'success', reference, amount: 100000, currency: 'NGN', fees: 1500, subaccount: {}, split: {} });
+const pageOf = (data, pageCount = 1) => Response.json({ status: true, message: 'ok', data, meta: { total: data.length, skipped: 0, perPage: 100, page: 1, pageCount } });
+const DIAG_DONATION = { id: 11, paystack_reference: 'ref-diag-1', payout_status: 'pending_payout', created_at: '2026-10-12T23:27:56.200Z' };
+
+// listFor(hasFrom, page) -> settlements; txFor(settlementId) -> references
+function diagMock({ listFor, txFor = () => [], candidates = [DIAG_DONATION], listError = null }) {
+  const beneficiary = { ...BEN, verification_status: 'verified', paystack_subaccount_code: 'ACCT_diag', paystack_subaccount_id: 77 };
+  return (url, init) => {
+    const m = init.method || 'GET';
+    if (url.includes('/beneficiaries?fundraiser_id=eq.7')) return Response.json([beneficiary]);
+    if (url.includes('/rest/v1/donations?select=id,paystack_reference')) return Response.json(candidates);
+    if (url.startsWith('https://api.paystack.co/settlement?')) {
+      if (listError) return Response.json({ status: false, message: listError }, { status: 401 });
+      const q = new URL(url).searchParams;
+      return pageOf(listFor(q.has('from'), Number(q.get('page'))));
+    }
+    const t = url.match(/settlement\/(\d+)\/transactions/);
+    if (t) return pageOf(txFor(t[1]).map(txItem));
+    if (m === 'PATCH' && url.includes('/rest/v1/donations')) return Response.json([{ id: 11 }]);
+    return Response.json([]);
+  };
+}
+const paystackListCalls = () => calls.filter((c) => c.url.startsWith('https://api.paystack.co/settlement?'));
+
+test('check payouts: beneficiary already settled by Paystack -> preview shows the evidence and saves nothing; apply saves it', async () => {
+  calls = [];
+  mock = diagMock({ listFor: () => [settlementItem(900, 'success')], txFor: () => ['other-ref', 'ref-diag-1'] });
+  const pre = await (await reconcile(false)).json();
+  assert.equal(pre.mode, 'preview');
+  assert.deepEqual(pre.will_change, { settled: 1, processing: 0, failed: 0 });
+  assert.equal(pre.settlements_listed, 1);
+  assert.equal(patchesTo('donations').length, 0);
+  assert.deepEqual(pre.diagnostics.settlements, [{
+    id: '900', status: 'success', settlement_date: '2026-10-14T00:00:00.000Z', recognised: true,
+    transactions_opened: 2, donations_found: 1, complete: true,
+  }]);
+  assert.equal(pre.diagnostics.start_date, '2026-10-11');
+  assert.equal(pre.diagnostics.start_date_fallback.ran, false, 'everything found in pass 1: no second pass');
+  assert.equal(paystackListCalls().length, 1);
+
+  calls = [];
+  const done = await (await reconcile(true)).json();
+  assert.equal(done.applied, 1);
+  const [p] = patchesTo('donations');
+  assert.match(p.url, /id=in\.\(11\)&payout_status=in\.\(pending_payout,processing,failed\)/);
+  assert.equal(JSON.parse(p.init.body).payout_confirmed_via, 'paystack_settlement_api');
+});
+
+test('check payouts: Paystack lists no settlements -> explained, nothing changes, second pass has no start date', async () => {
+  calls = [];
+  mock = diagMock({ listFor: () => [] });
+  const r = await (await reconcile(false)).json();
+  assert.equal(r.settlements_listed, 0);
+  assert.deepEqual(r.will_change, { settled: 0, processing: 0, failed: 0 });
+  assert.equal(r.diagnostics.start_date_fallback.ran, true);
+  assert.equal(r.diagnostics.settlements_total, 0);
+  const lists = paystackListCalls();
+  assert.equal(lists.length, 2);
+  assert.match(lists[0].url, /from=2026-10-11/);
+  assert.doesNotMatch(lists[1].url, /from=/);
+  assert.equal(patchesTo('donations').length, 0);
+});
+
+test('check payouts: settlement listed but it does not contain the donation -> reported, still pending', async () => {
+  calls = [];
+  mock = diagMock({ listFor: () => [settlementItem(901, 'success')], txFor: () => ['some-other-ref', 'another-ref'] });
+  const r = await (await reconcile(false)).json();
+  assert.deepEqual(r.will_change, { settled: 0, processing: 0, failed: 0 });
+  assert.equal(r.unmatched, 1);
+  assert.equal(r.diagnostics.settlements[0].transactions_opened, 2);
+  assert.equal(r.diagnostics.settlements[0].donations_found, 0);
+  assert.equal(patchesTo('donations').length, 0);
+});
+
+test('check payouts: the second pass finds a settlement the start-date list did not return (same evidence rule)', async () => {
+  calls = [];
+  mock = diagMock({ listFor: (hasFrom) => (hasFrom ? [] : [settlementItem(902, 'success')]), txFor: () => ['ref-diag-1'] });
+  const pre = await (await reconcile(false)).json();
+  assert.deepEqual(pre.will_change, { settled: 1, processing: 0, failed: 0 });
+  assert.equal(pre.diagnostics.start_date_fallback.ran, true);
+  assert.equal(pre.diagnostics.start_date_fallback.additional_settlements, 1);
+  assert.equal(pre.diagnostics.settlements_listed_with_start_date, 0);
+  assert.equal(patchesTo('donations').length, 0, 'preview still changes nothing');
+  calls = [];
+  const done = await (await reconcile(true)).json();
+  assert.equal(done.applied, 1);
+  assert.equal(patchesTo('donations').length, 1);
+});
+
+test('check payouts: unrecognised settlement status is listed but never used as evidence', async () => {
+  calls = [];
+  mock = diagMock({ listFor: () => [settlementItem(903, 'reversed')], txFor: () => ['ref-diag-1'] });
+  const r = await (await reconcile(false)).json();
+  assert.deepEqual(r.will_change, { settled: 0, processing: 0, failed: 0 });
+  assert.deepEqual(r.diagnostics.unrecognised_statuses, ['reversed']);
+  assert.equal(r.diagnostics.settlements[0].recognised, false);
+  assert.equal(r.diagnostics.settlements[0].transactions_opened, 0);
+  assert.equal(calls.filter((c) => /settlement\/\d+\/transactions/.test(c.url)).length, 0);
+});
+
+test('check payouts: a pending settlement is processing, never settled', async () => {
+  calls = [];
+  mock = diagMock({ listFor: () => [settlementItem(904, 'pending')], txFor: () => ['ref-diag-1'] });
+  const r = await (await reconcile(false)).json();
+  assert.deepEqual(r.will_change, { settled: 0, processing: 1, failed: 0 });
+});
+
+test('check payouts: a Paystack error is returned as a readable 502 message and saves nothing', async () => {
+  calls = [];
+  mock = diagMock({ listFor: () => [], listError: 'Invalid key' });
+  const res = await reconcile(false);
+  assert.equal(res.status, 502);
+  assert.match((await res.json()).error, /Paystack settlement lookup failed: Invalid key/);
+  assert.equal(patchesTo('donations').length, 0);
+});
+
+test('check payouts: the lookup never exceeds its Paystack call budget and says so', async () => {
+  calls = [];
+  const many = Array.from({ length: 30 }, (_, i) => settlementItem(1000 + i, 'success'));
+  mock = diagMock({ listFor: () => many, txFor: () => ['unrelated'] });
+  const r = await (await reconcile(false)).json();
+  assert.equal(r.truncated, true);
+  assert.ok(calls.filter((c) => c.url.startsWith('https://api.paystack.co/')).length <= 24);
+});
+
+test('check payouts: a donation already settled is never moved, even if a settlement lists it', async () => {
+  const env = { PAYSTACK_SECRET_KEY: 'sk_test_secret' };
+  calls = [];
+  mock = diagMock({ listFor: () => [settlementItem(905, 'success')], txFor: () => ['ref-diag-1'] });
+  const donation = { ...DIAG_DONATION, payout_status: 'settled' };
+  const r = await findPayoutEvidence(env, { subaccountId: 77, donations: [donation], budget: { left: 24 } });
+  assert.equal(r.ok, true);
+  assert.deepEqual(r.proposals, []);
+});
+
+test('check payouts: the response never contains credentials or bank details', async () => {
+  calls = [];
+  mock = diagMock({ listFor: () => [settlementItem(906, 'success')], txFor: () => ['ref-diag-1'] });
+  const text = await (await reconcile(false)).text();
+  for (const secret of ['sk_test_secret', 'service-role-key', '0123456789', 'session-secret', 'correct horse']) {
+    assert.ok(!text.includes(secret), 'response must not include ' + secret);
+  }
+});
+
+function loadPayoutPanelRenderer() {
+  const html = fs.readFileSync(new URL('../public/admin/dashboard.html', import.meta.url), 'utf8');
+  const m = html.match(/\/\/ <payout-check-render>([\s\S]*?)\/\/ <\/payout-check-render>/);
+  assert.ok(m, 'render block markers are present in dashboard.html');
+  const escapeHtml = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  const PAYOUT_LABELS = { not_applicable: 'No beneficiary payout', pending_payout: 'Pending payout', processing: 'Payout processing', settled: 'Settled (confirmed)', failed: 'Payout failed' };
+  return new Function('escapeHtml', 'PAYOUT_LABELS', m[1] + '\nreturn { payoutLookupDetailsHtml, renderPayoutCheck };')(escapeHtml, PAYOUT_LABELS);
+}
+const diagRow = (o = {}) => ({ id: '900', status: 'success', settlement_date: '2026-10-14T00:00:00.000Z', recognised: true, transactions_opened: 2, donations_found: 0, complete: true, ...o });
+const baseResult = (o = {}) => ({
+  mode: 'preview', donations_checked: 1, settlements_checked: 0, settlements_listed: 0, truncated: false,
+  will_change: { settled: 0, processing: 0, failed: 0 }, unmatched: 1, changes: [],
+  diagnostics: { start_date: '2026-10-11', settlements_listed_with_start_date: 0, start_date_fallback: { ran: true, settlements_listed: 0, additional_settlements: 0 }, settlements_total: 0, settlements: [], unrecognised_statuses: [] },
+  ...o,
+});
+
+test('check payouts panel: says plainly when Paystack listed no settlement, and when none contains the donation', () => {
+  const { renderPayoutCheck } = loadPayoutPanelRenderer();
+  const none = renderPayoutCheck(baseResult());
+  assert.match(none.html, /No payout confirmations found at Paystack yet \(1 donation\(s\) checked\)/);
+  assert.match(none.html, /What Paystack returned/);
+  assert.match(none.html, /Paystack did not list any settlement for this subaccount/);
+  assert.equal(none.total, 0);
+
+  const notContained = renderPayoutCheck(baseResult({
+    settlements_listed: 1,
+    diagnostics: { ...baseResult().diagnostics, settlements_total: 1, settlements_listed_with_start_date: 1, settlements: [diagRow()] },
+  }));
+  assert.match(notContained.html, /#900 · success · 2026-10-14 · 2 transaction\(s\) opened · 0 of the donation\(s\) checked found/);
+  assert.match(notContained.html, /none of the settlements that were read contains the donation/);
+});
+
+test('check payouts panel: save button only when there is evidence; 0 eligible donations is explained; text is escaped', () => {
+  const { renderPayoutCheck } = loadPayoutPanelRenderer();
+  const withChange = renderPayoutCheck(baseResult({
+    settlements_listed: 1, will_change: { settled: 1, processing: 0, failed: 0 }, unmatched: 0,
+    changes: [{ reference: 'ref-diag-1', from: 'pending_payout', to: 'settled', settlement_id: '900', settlement_status: 'success' }],
+    diagnostics: { ...baseResult().diagnostics, settlements_total: 1, settlements: [diagRow({ donations_found: 1 })] },
+  }));
+  assert.equal(withChange.total, 1);
+  assert.match(withChange.html, /Save these 1 change\(s\)/);
+  assert.match(withChange.html, /id="applyPayoutsBtn"/);
+
+  const zero = renderPayoutCheck(baseResult({ donations_checked: 0, unmatched: 0 }));
+  assert.match(zero.html, /No donation on this campaign is waiting for a payout check/);
+  assert.doesNotMatch(zero.html, /applyPayoutsBtn/);
+
+  const hostile = renderPayoutCheck(baseResult({
+    settlements_listed: 1,
+    diagnostics: { ...baseResult().diagnostics, settlements_total: 1, settlements: [diagRow({ id: '<img src=x onerror=alert(1)>', status: '<script>x</script>' })] },
+  }));
+  assert.doesNotMatch(hostile.html, /<img src=x|<script>x/);
+  assert.match(hostile.html, /&lt;img src=x/);
+});
