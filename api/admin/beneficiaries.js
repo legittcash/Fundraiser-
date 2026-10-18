@@ -345,7 +345,7 @@ async function handlePaystackStatus(req, env, config) {
 // =========================================================================
 // route=reconcile-payouts - the ONLY place a donation's payout status can
 // move to processing / settled / failed. Evidence = Paystack's Settlement
-// API for this beneficiary's subaccount (see lib/payout-status.js).
+// API for this beneficiary's subaccount (see lib/payout-evidence.js).
 //
 //   { fundraiser_id }                 -> preview: lists what WOULD change
 //   { fundraiser_id, apply: true }    -> applies exactly those changes
@@ -354,6 +354,7 @@ async function handlePaystackStatus(req, env, config) {
 // update is conditional on the donation still being in an earlier state.
 // =========================================================================
 const PAYSTACK_CALL_BUDGET = 24; // Workers cap subrequests per request
+const PATCH_RESERVE = 8; // always left for saving, after the Paystack lookups
 const MAX_CANDIDATES = 1000;
 const FROM_STATES_FOR = {
   settled: ['pending_payout', 'processing', 'failed'],
@@ -403,6 +404,10 @@ async function handleReconcilePayouts(req, env, config) {
     const found = await findPayoutEvidence(env, { subaccountId: beneficiary.paystack_subaccount_id, donations: candidates, budget });
     if (!found.ok) return jsonResponse(502, { error: `Paystack settlement lookup failed: ${found.error}` });
 
+    // The (optional) second lookup pass can use more of the budget; keep a
+    // small reserve so "apply" can still save what the preview found.
+    budget.left = Math.max(budget.left, PATCH_RESERVE);
+
     const counts = { settled: 0, processing: 0, failed: 0 };
     for (const p of found.proposals) counts[p.to] += 1;
 
@@ -410,6 +415,10 @@ async function handleReconcilePayouts(req, env, config) {
       mode: apply ? 'applied' : 'preview',
       donations_checked: candidates.length,
       settlements_checked: found.settlements_checked,
+      settlements_listed: found.settlements_listed,
+      // What Paystack returned (ids, statuses, dates, counts). Never includes
+      // bank details, donor details or credentials. See lib/payout-evidence.js.
+      diagnostics: found.diagnostics,
       truncated: found.truncated,
       will_change: counts,
       unmatched: candidates.length - found.proposals.length,
