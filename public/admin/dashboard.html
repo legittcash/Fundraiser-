@@ -2204,6 +2204,78 @@
   // Compares this campaign's donations with Paystack's settlements.
   // Step 1 is a preview that changes nothing; step 2 saves exactly what the
   // preview showed. Nothing becomes "Settled" without Paystack evidence.
+  // <payout-check-render>
+  // Pure rendering helpers for the "Check payouts" result. They only call
+  // escapeHtml(), and are kept together between these markers so a test can
+  // load and run them on their own. Everything shown comes from the server's
+  // response: settlement ids, statuses, dates and counts. No credentials and
+  // no bank details are ever part of it.
+  function payoutLookupDetailsHtml(data) {
+    const d = data && data.diagnostics;
+    if (!d) return '';
+    const listed = Number(data.settlements_listed) || 0;
+    const fb = d.start_date_fallback || {};
+    const rows = Array.isArray(d.settlements) ? d.settlements : [];
+    const foundTotal = rows.reduce((n, r) => n + (Number(r.donations_found) || 0), 0);
+    const openedTotal = rows.reduce((n, r) => n + (r.recognised ? 1 : 0), 0);
+
+    let out = '<div class="muted-cell" style="margin-top:10px;"><strong>What Paystack returned</strong></div>';
+    out += `<div class="muted-cell">${listed} settlement(s) listed for this subaccount` +
+      ` (${Number(d.settlements_listed_with_start_date) || 0} since ${escapeHtml(d.start_date || 'the beginning')}` +
+      (fb.ran ? `; searched again with no start date: ${Number(fb.settlements_listed) || 0} listed, ${Number(fb.additional_settlements) || 0} extra` : '') +
+      ').</div>';
+
+    for (const r of rows.slice(0, 20)) {
+      const when = r.settlement_date ? escapeHtml(String(r.settlement_date).slice(0, 10)) : 'no date';
+      const note = !r.recognised ? ' — status not recognised, not used as evidence' : r.complete ? '' : ' — not fully read';
+      out += `<div class="muted-cell">#${escapeHtml(r.id)} · ${escapeHtml(r.status || 'no status')} · ${when} · ` +
+        `${Number(r.transactions_opened) || 0} transaction(s) opened · ${Number(r.donations_found) || 0} of the donation(s) checked found${note}</div>`;
+    }
+    if ((Number(d.settlements_total) || 0) > rows.length) {
+      out += `<div class="muted-cell">…and ${Number(d.settlements_total) - rows.length} more settlement(s) not shown.</div>`;
+    }
+
+    if (listed === 0) {
+      out += '<div class="muted-cell" style="margin-top:6px;">Paystack did not list any settlement for this subaccount. Either nothing has been settled to it yet, or Paystack does not list it under this subaccount. Compare with Paystack Dashboard → Payouts.</div>';
+    } else if (openedTotal === 0) {
+      out += '<div class="muted-cell" style="margin-top:6px;">Paystack listed settlement(s), but none has a status this platform recognises, so none could be used as evidence.</div>';
+    } else if (foundTotal === 0) {
+      out += '<div class="muted-cell" style="margin-top:6px;">Paystack listed settlement(s), but none of the settlements that were read contains the donation(s) being checked.</div>';
+    }
+    return out;
+  }
+
+  // Returns { html, total }: the panel's HTML, and how many changes the
+  // "Save" button would apply (0 = no button).
+  function renderPayoutCheck(data) {
+    const c = data.will_change || { settled: 0, processing: 0, failed: 0 };
+    const total = c.settled + c.processing + c.failed;
+    const checked = Number(data.donations_checked) || 0;
+    const more = data.truncated ? '<div class="muted-cell">Not every settlement could be checked in one go — run it again to continue.</div>' : '';
+    const evidence = (data.changes || []).slice(0, 10).map((x) =>
+      `<div class="muted-cell">${escapeHtml(x.reference)}: ${escapeHtml(PAYOUT_LABELS[x.from] || x.from)} → ${escapeHtml(PAYOUT_LABELS[x.to] || x.to)} (Paystack settlement ${escapeHtml(x.settlement_id)}, ${escapeHtml(x.settlement_status)})</div>`
+    ).join('');
+    const stillWaiting = checked === 0
+      ? '<div>No donation on this campaign is waiting for a payout check (none is Pending payout, Processing or Failed under this beneficiary\'s current subaccount).</div>'
+      : `<div>${Number(data.unmatched) || 0} donation(s) not found in any Paystack settlement yet — they stay <strong>Pending payout</strong>.</div>`;
+    const details = payoutLookupDetailsHtml(data);
+
+    if (data.mode === 'applied') {
+      return { html: `<div><strong>Saved.</strong> ${Number(data.applied) || 0} donation(s) updated.</div>${stillWaiting}${more}${details}`, total: 0 };
+    }
+    if (total === 0) {
+      return { html: `<div>No payout confirmations found at Paystack yet (${checked} donation(s) checked).</div>${stillWaiting}${more}${details}`, total: 0 };
+    }
+    return {
+      html: `
+          <div><strong>Paystack reports:</strong> ${c.settled} settled · ${c.processing} processing · ${c.failed} failed.</div>
+          ${evidence}${stillWaiting}${more}${details}
+          <button type="button" class="btn-primary" id="applyPayoutsBtn" style="margin-top:8px;">Save these ${total} change(s)</button>`,
+      total,
+    };
+  }
+  // </payout-check-render>
+
   async function runPayoutCheck(apply) {
     const fundraiserId = document.getElementById('beneficiaryFundraiserId').value;
     checkPayoutsBtn.disabled = true;
@@ -2215,33 +2287,25 @@
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ fundraiser_id: Number(fundraiserId), apply }),
       });
-      const data = await res.json();
-      if (!res.ok) { payoutCheckResult.innerHTML = ''; beneficiaryFormError.textContent = data.error || 'Payout check failed.'; return; }
+      let data = null;
+      try { data = await res.json(); } catch (_) { data = null; }
+      if (!res.ok || !data) {
+        // Shown right here under the buttons, where the admin is looking.
+        const msg = (data && data.error) || `The payout check failed (the server answered HTTP ${res.status}${data ? '' : ' without a readable result'}).`;
+        payoutCheckResult.innerHTML = `<div class="form-error">${escapeHtml(msg)}</div>`;
+        return;
+      }
 
-      const c = data.will_change;
-      const total = c.settled + c.processing + c.failed;
-      const more = data.truncated ? '<div class="muted-cell">Not every settlement could be checked in one go — run it again to continue.</div>' : '';
-      const evidence = (data.changes || []).slice(0, 10).map((x) =>
-        `<div class="muted-cell">${escapeHtml(x.reference)}: ${escapeHtml(PAYOUT_LABELS[x.from] || x.from)} → ${escapeHtml(PAYOUT_LABELS[x.to] || x.to)} (Paystack settlement ${escapeHtml(x.settlement_id)}, ${escapeHtml(x.settlement_status)})</div>`
-      ).join('');
-      const stillWaiting = `<div>${data.unmatched} donation(s) not found in any Paystack settlement yet — they stay <strong>Pending payout</strong>.</div>`;
-
+      const view = renderPayoutCheck(data);
+      payoutCheckResult.innerHTML = view.html;
       if (data.mode === 'applied') {
-        payoutCheckResult.innerHTML = `<div><strong>Saved.</strong> ${data.applied} donation(s) updated.</div>${stillWaiting}${more}`;
         loadCampaigns(currentSearch); loadAnalytics();
-      } else if (total === 0) {
-        payoutCheckResult.innerHTML = `<div>No payout confirmations found at Paystack yet (${data.donations_checked} donation(s) checked).</div>${stillWaiting}${more}`;
-      } else {
-        payoutCheckResult.innerHTML = `
-          <div><strong>Paystack reports:</strong> ${c.settled} settled · ${c.processing} processing · ${c.failed} failed.</div>
-          ${evidence}${stillWaiting}${more}
-          <button type="button" class="btn-primary" id="applyPayoutsBtn" style="margin-top:8px;">Save these ${total} change(s)</button>`;
+      } else if (view.total > 0) {
         document.getElementById('applyPayoutsBtn').addEventListener('click', () => runPayoutCheck(true));
       }
     } catch (err) {
       console.error(err);
-      payoutCheckResult.innerHTML = '';
-      beneficiaryFormError.textContent = 'Something went wrong checking payouts.';
+      payoutCheckResult.innerHTML = '<div class="form-error">Something went wrong checking payouts (the server could not be reached). Please try again.</div>';
     } finally {
       checkPayoutsBtn.disabled = false;
     }
