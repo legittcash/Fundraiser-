@@ -610,7 +610,7 @@ const pageOf = (data, pageCount = 1) => Response.json({ status: true, message: '
 const DIAG_DONATION = { id: 11, paystack_reference: 'ref-diag-1', payout_status: 'pending_payout', created_at: '2026-10-12T23:27:56.200Z' };
 
 // listFor(hasFrom, page) -> settlements; txFor(settlementId) -> references
-function diagMock({ listFor, txFor = () => [], txResponse = null, candidates = [DIAG_DONATION], listError = null }) {
+function diagMock({ listFor, mainListFor = () => [], txFor = () => [], txResponse = null, candidates = [DIAG_DONATION], listError = null }) {
   const beneficiary = { ...BEN, verification_status: 'verified', paystack_subaccount_code: 'ACCT_diag', paystack_subaccount_id: 77 };
   return (url, init) => {
     const m = init.method || 'GET';
@@ -619,6 +619,7 @@ function diagMock({ listFor, txFor = () => [], txResponse = null, candidates = [
     if (url.startsWith('https://api.paystack.co/settlement?')) {
       if (listError) return Response.json({ status: false, message: listError }, { status: 401 });
       const q = new URL(url).searchParams;
+      if (q.get('subaccount') === 'none') return pageOf(mainListFor(q.has('from'), Number(q.get('page'))));
       return pageOf(listFor(q.has('from'), Number(q.get('page'))));
     }
     const t = url.match(/settlement\/(\d+)\/transactions/);
@@ -663,9 +664,10 @@ test('check payouts: Paystack lists no settlements -> explained, nothing changes
   assert.equal(r.diagnostics.start_date_fallback.ran, true);
   assert.equal(r.diagnostics.settlements_total, 0);
   const lists = paystackListCalls();
-  assert.equal(lists.length, 2);
+  assert.equal(lists.length, 3, 'start-date list, list without start date, then the read-only main-account look');
   assert.match(lists[0].url, /from=2026-10-11/);
   assert.doesNotMatch(lists[1].url, /from=/);
+  assert.match(lists[2].url, /subaccount=none/);
   assert.equal(patchesTo('donations').length, 0);
 });
 
@@ -851,4 +853,76 @@ test('check payouts: amounts Paystack does not send are null, not invented', asy
   assert.equal(row.total_amount, null);
   assert.equal(row.effective_amount, null);
   assert.equal(row.currency, null);
+});
+
+// ---- main-account look (the Paystack support finding) -----------------
+// Paystack: a transaction is listed in the MAIN account's settlement; the
+// subaccount settlement's own transaction list is always empty.
+const mainLive = () => diagMock({
+  listFor: () => [settlementItem(12085311, 'success')],
+  mainListFor: () => [{ ...settlementItem(12085310, 'success'), total_amount: 2500, effective_amount: 2500 }],
+  txFor: (id) => (id === '12085310' ? ['ref-diag-1'] : []),
+});
+
+test('check payouts: reference found in a main-account settlement is reported with the next subaccount settlement, never proposed', async () => {
+  calls = [];
+  mock = mainLive();
+  const r = await (await reconcile(false)).json();
+  assert.deepEqual(r.will_change, { settled: 0, processing: 0, failed: 0 }, 'a main-account listing alone is not payout evidence');
+  assert.equal(r.changes.length, 0);
+  assert.equal(patchesTo('donations').length, 0);
+  const main = r.diagnostics.main_account;
+  assert.equal(main.ran, true);
+  assert.equal(main.settlements_listed, 1);
+  assert.equal(main.settlements_opened, 1);
+  assert.equal(main.found.length, 1);
+  assert.equal(main.found[0].reference, 'ref-diag-1');
+  assert.equal(main.found[0].settlement_id, '12085310');
+  assert.equal(main.found[0].next_subaccount_settlement.id, '12085311');
+  assert.equal(main.found[0].next_subaccount_settlement.total_amount, 97500);
+  // The main account is queried with Paystack's documented subaccount=none.
+  assert.ok(paystackListCalls().some((c) => new URL(c.url).searchParams.get('subaccount') === 'none'));
+
+  const html = loadPayoutPanelRenderer().renderPayoutCheck(r).html;
+  assert.match(html, /Main-account settlements/);
+  assert.match(html, /ref-diag-1 is in main settlement #12085310/);
+  assert.match(html, /Subaccount settlement #12085311 \(success, NGN 975\.00\) comes right after it/);
+  assert.match(html, /Paystack has not confirmed that link, so nothing is marked Settled/);
+  assert.doesNotMatch(html, /applyPayoutsBtn/);
+});
+
+test('check payouts: main-account look is skipped when the subaccount settlement already proves the payout', async () => {
+  calls = [];
+  mock = diagMock({ listFor: () => [settlementItem(900, 'success')], txFor: () => ['ref-diag-1'] });
+  const r = await (await reconcile(false)).json();
+  assert.equal(r.diagnostics.main_account.ran, false);
+  assert.ok(!paystackListCalls().some((c) => new URL(c.url).searchParams.get('subaccount') === 'none'));
+});
+
+test('check payouts: reference not in any main settlement, or a Paystack error there, is shown and changes nothing', async () => {
+  calls = [];
+  mock = diagMock({ listFor: () => [], mainListFor: () => [settlementItem(7, 'success')], txFor: () => ['other'] });
+  let r = await (await reconcile(false)).json();
+  assert.equal(r.diagnostics.main_account.found.length, 0);
+  assert.match(loadPayoutPanelRenderer().renderPayoutCheck(r).html, /None of the donation\(s\) checked was found in the main-account settlements/);
+
+  const inner = diagMock({ listFor: () => [], mainListFor: () => [] });
+  mock = (url, init) => (url.startsWith('https://api.paystack.co/settlement?') && new URL(url).searchParams.get('subaccount') === 'none'
+    ? Response.json({ status: false, message: 'Not allowed' }, { status: 403 }) : inner(url, init));
+  r = await (await reconcile(false)).json();
+  assert.equal(r.diagnostics.main_account.error, 'Not allowed');
+  assert.equal(r.changes.length, 0);
+  assert.match(loadPayoutPanelRenderer().renderPayoutCheck(r).html, /Paystack error while reading them: Not allowed/);
+});
+
+test('check payouts: the main-account look respects the call budget', async () => {
+  calls = [];
+  mock = diagMock({
+    listFor: () => [],
+    mainListFor: () => Array.from({ length: 50 }, (_, i) => settlementItem(1000 + i, 'success')),
+    txFor: () => ['unrelated'],
+  });
+  const r = await (await reconcile(false)).json();
+  assert.ok(calls.filter((c) => c.url.startsWith('https://api.paystack.co/')).length <= 24);
+  assert.equal(r.truncated, true);
 });
