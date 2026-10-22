@@ -2250,9 +2250,14 @@
       for (const f of (Array.isArray(main.found) ? main.found : []).slice(0, 10)) {
         const when = f.settlement_date ? escapeHtml(String(f.settlement_date).slice(0, 10)) : 'no date';
         const n = f.next_subaccount_settlement;
-        out += `<div class="muted-cell">${escapeHtml(f.reference)} is in main settlement #${escapeHtml(f.settlement_id)} (${escapeHtml(f.status || 'no status')}, ${when}, ${fmt(f.total_amount)}).` +
-          (n ? ` Subaccount settlement #${escapeHtml(n.id)} (${escapeHtml(n.status || 'no status')}, ${fmt(n.total_amount, n.currency)}) comes right after it and may be its payout. Paystack has not confirmed that link, so nothing is marked Settled.</div>`
-             : ' No subaccount settlement was found right after it.</div>');
+        const link = f.link || {};
+        out += `<div class="muted-cell">${escapeHtml(f.reference)} is in main settlement #${escapeHtml(f.settlement_id)} (${escapeHtml(f.status || 'no status')}, ${when}, ${fmt(f.total_amount)}). `;
+        if (link.confirmed && n) {
+          out += `<strong>Confirmed:</strong> subaccount settlement #${escapeHtml(n.id)} (${escapeHtml(n.status || 'no status')}, ${fmt(n.total_amount, n.currency)}) equals the beneficiary share of that main settlement (${fmt(link.expected_amount, n.currency)}), so it is this donation's payout.</div>`;
+        } else {
+          out += (n ? `Subaccount settlement #${escapeHtml(n.id)} (${escapeHtml(n.status || 'no status')}, ${fmt(n.total_amount, n.currency)}) follows it, but ` : '') +
+            `<strong>not confirmed:</strong> ${escapeHtml(link.reason || 'the link could not be checked')}. Nothing is marked Settled.</div>`;
+        }
       }
       if (!(Array.isArray(main.found) && main.found.length) && !main.error) {
         out += '<div class="muted-cell">None of the donation(s) checked was found in the main-account settlements that were read.</div>';
@@ -2261,8 +2266,8 @@
 
     const emptyWithMoney = rows.filter((r) => r.recognised && (Number(r.transactions_opened) || 0) === 0 && ((Number(r.total_amount) || 0) > 0 || (Number(r.transactions_reported) || 0) > 0));
     if (emptyWithMoney.length) {
-      out += '<div class="muted-cell" style="margin-top:6px;">Paystack lists settlement ' + emptyWithMoney.map((r) => '#' + escapeHtml(r.id)).join(', ') +
-        ' with an amount but returned no transactions for it, so this platform cannot tell which donations it paid. Nothing is marked Settled from an amount alone. Open it in Paystack Dashboard → Payouts to see what it contains; if it lists this donation there, Paystack\'s API is returning an empty list and support can look into it.</div>';
+      out += '<div class="muted-cell" style="margin-top:6px;">Paystack does not list transactions inside a subaccount payout (settlement ' + emptyWithMoney.map((r) => '#' + escapeHtml(r.id)).join(', ') +
+        '); it lists them in the main account\'s settlement instead, which is why the donation is matched through the main-account section above. A payout is only marked Settled when that match is confirmed by the amounts.</div>';
     }
 
     if (listed === 0) {
@@ -2283,7 +2288,7 @@
     const checked = Number(data.donations_checked) || 0;
     const more = data.truncated ? '<div class="muted-cell">Not every settlement could be checked in one go — run it again to continue.</div>' : '';
     const evidence = (data.changes || []).slice(0, 10).map((x) =>
-      `<div class="muted-cell">${escapeHtml(x.reference)}: ${escapeHtml(PAYOUT_LABELS[x.from] || x.from)} → ${escapeHtml(PAYOUT_LABELS[x.to] || x.to)} (Paystack settlement ${escapeHtml(x.settlement_id)}, ${escapeHtml(x.settlement_status)})</div>`
+      `<div class="muted-cell">${escapeHtml(x.reference)}: ${escapeHtml(PAYOUT_LABELS[x.from] || x.from)} → ${escapeHtml(PAYOUT_LABELS[x.to] || x.to)} (Paystack settlement ${escapeHtml(x.settlement_id)}, ${escapeHtml(x.settlement_status)}${x.main_settlement_id ? '; reference found in main settlement #' + escapeHtml(x.main_settlement_id) + ', amounts match' : ''})</div>`
     ).join('');
     const stillWaiting = checked === 0
       ? '<div>No donation on this campaign is waiting for a payout check (none is Pending payout, Processing or Failed under this beneficiary\'s current subaccount).</div>'
