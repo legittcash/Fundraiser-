@@ -2241,6 +2241,24 @@
       out += `<div class="muted-cell">…and ${Number(d.settlements_total) - rows.length} more settlement(s) not shown.</div>`;
     }
 
+    const main = d.main_account;
+    if (main && main.ran) {
+      out += '<div class="muted-cell" style="margin-top:10px;"><strong>Main-account settlements (read-only look)</strong></div>';
+      out += `<div class="muted-cell">${Number(main.settlements_listed) || 0} listed, ${Number(main.settlements_opened) || 0} opened.</div>`;
+      if (main.error) out += `<div class="muted-cell">Paystack error while reading them: ${escapeHtml(main.error)}</div>`;
+      const fmt = (kobo, cur) => (typeof kobo === 'number' ? `${escapeHtml(cur || 'NGN')} ${(kobo / 100).toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : 'amount unknown');
+      for (const f of (Array.isArray(main.found) ? main.found : []).slice(0, 10)) {
+        const when = f.settlement_date ? escapeHtml(String(f.settlement_date).slice(0, 10)) : 'no date';
+        const n = f.next_subaccount_settlement;
+        out += `<div class="muted-cell">${escapeHtml(f.reference)} is in main settlement #${escapeHtml(f.settlement_id)} (${escapeHtml(f.status || 'no status')}, ${when}, ${fmt(f.total_amount)}).` +
+          (n ? ` Subaccount settlement #${escapeHtml(n.id)} (${escapeHtml(n.status || 'no status')}, ${fmt(n.total_amount, n.currency)}) comes right after it and may be its payout. Paystack has not confirmed that link, so nothing is marked Settled.</div>`
+             : ' No subaccount settlement was found right after it.</div>');
+      }
+      if (!(Array.isArray(main.found) && main.found.length) && !main.error) {
+        out += '<div class="muted-cell">None of the donation(s) checked was found in the main-account settlements that were read.</div>';
+      }
+    }
+
     const emptyWithMoney = rows.filter((r) => r.recognised && (Number(r.transactions_opened) || 0) === 0 && ((Number(r.total_amount) || 0) > 0 || (Number(r.transactions_reported) || 0) > 0));
     if (emptyWithMoney.length) {
       out += '<div class="muted-cell" style="margin-top:6px;">Paystack lists settlement ' + emptyWithMoney.map((r) => '#' + escapeHtml(r.id)).join(', ') +
