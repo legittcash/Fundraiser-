@@ -388,7 +388,7 @@ async function handleReconcilePayouts(req, env, config) {
     }
 
     const candRes = await fetch(
-      `${config.SUPABASE_URL}/rest/v1/donations?select=id,paystack_reference,payout_status,created_at` +
+      `${config.SUPABASE_URL}/rest/v1/donations?select=id,paystack_reference,payout_status,created_at,settled_amount` +
         `&fundraiser_id=eq.${encodeURIComponent(fundraiserId)}` +
         `&settled_to_subaccount=eq.${encodeURIComponent(code)}` +
         `&payout_status=in.(pending_payout,processing,failed)&order=created_at.asc&limit=${MAX_CANDIDATES}`,
@@ -401,7 +401,7 @@ async function handleReconcilePayouts(req, env, config) {
     const candidates = await candRes.json();
 
     const budget = { left: PAYSTACK_CALL_BUDGET };
-    const found = await findPayoutEvidence(env, { subaccountId: beneficiary.paystack_subaccount_id, donations: candidates, budget });
+    const found = await findPayoutEvidence(env, { subaccountId: beneficiary.paystack_subaccount_id, subaccountCode: code, donations: candidates, budget });
     if (!found.ok) return jsonResponse(502, { error: `Paystack settlement lookup failed: ${found.error}` });
 
     // The (optional) second lookup pass can use more of the budget; keep a
@@ -424,6 +424,7 @@ async function handleReconcilePayouts(req, env, config) {
       unmatched: candidates.length - found.proposals.length,
       changes: found.proposals.slice(0, 50).map((p) => ({
         reference: p.reference, from: p.from, to: p.to, settlement_id: p.settlement_id, settlement_status: p.settlement_status,
+        via: p.via, main_settlement_id: p.main_settlement_id,
       })),
     };
 
@@ -432,8 +433,8 @@ async function handleReconcilePayouts(req, env, config) {
     // Apply: one conditional PATCH per (target status, settlement).
     const groups = new Map();
     for (const p of found.proposals) {
-      const key = `${p.to}|${p.settlement_id}|${p.settlement_date || ''}`;
-      if (!groups.has(key)) groups.set(key, { to: p.to, settlement_id: p.settlement_id, date: p.settlement_date, ids: [] });
+      const key = `${p.to}|${p.settlement_id}|${p.settlement_date || ''}|${p.via}`;
+      if (!groups.has(key)) groups.set(key, { to: p.to, settlement_id: p.settlement_id, date: p.settlement_date, via: p.via, ids: [] });
       groups.get(key).ids.push(p.id);
     }
     let applied = 0;
@@ -457,7 +458,7 @@ async function handleReconcilePayouts(req, env, config) {
               payout_status_updated_at: nowIso,
               payout_settlement_id: g.settlement_id,
               payout_settlement_date: g.date,
-              payout_confirmed_via: 'paystack_settlement_api',
+              payout_confirmed_via: g.via || 'paystack_settlement_api',
             }),
           }
         );
