@@ -605,9 +605,9 @@ const settlementItem = (id, status) => ({
   total_fees: 0, total_processed: 97500, deductions: null, settlement_date: '2026-10-14T00:00:00.000Z',
   settled_by: null, createdAt: '2026-10-14T01:00:00.000Z', updatedAt: '2026-10-14T08:00:00.000Z',
 });
-const txItem = (reference) => ({ id: 1, domain: 'live', status: 'success', reference, amount: 100000, currency: 'NGN', fees: 1500, subaccount: {}, split: {} });
+const txItem = (x) => ({ id: 1, domain: 'live', status: 'success', reference: typeof x === 'string' ? x : undefined, amount: 100000, currency: 'NGN', fees: 1500, subaccount: {}, split: {}, ...(typeof x === 'string' ? {} : x) });
 const pageOf = (data, pageCount = 1) => Response.json({ status: true, message: 'ok', data, meta: { total: data.length, skipped: 0, perPage: 100, page: 1, pageCount } });
-const DIAG_DONATION = { id: 11, paystack_reference: 'ref-diag-1', payout_status: 'pending_payout', created_at: '2026-10-12T23:27:56.200Z' };
+const DIAG_DONATION = { id: 11, paystack_reference: 'ref-diag-1', payout_status: 'pending_payout', created_at: '2026-10-12T23:27:56.200Z', settled_amount: 975 };
 
 // listFor(hasFrom, page) -> settlements; txFor(settlementId) -> references
 function diagMock({ listFor, mainListFor = () => [], txFor = () => [], txResponse = null, candidates = [DIAG_DONATION], listError = null }) {
@@ -826,8 +826,8 @@ test('check payouts: settlement with an amount but an empty transaction list -> 
   const html = renderPayoutCheck(r).html;
   assert.match(html, /settlement amount NGN 975\.00/);
   assert.match(html, /Paystack says it holds 0 transaction\(s\)/);
-  assert.match(html, /with an amount but returned no transactions/);
-  assert.match(html, /Nothing is marked Settled from an amount alone/);
+  assert.match(html, /does not list transactions inside a subaccount payout \(settlement #12085311\)/);
+  assert.match(html, /only marked Settled when that match is confirmed by the amounts/);
   assert.doesNotMatch(html, /applyPayoutsBtn/);
 });
 
@@ -855,74 +855,136 @@ test('check payouts: amounts Paystack does not send are null, not invented', asy
   assert.equal(row.currency, null);
 });
 
-// ---- main-account look (the Paystack support finding) -----------------
-// Paystack: a transaction is listed in the MAIN account's settlement; the
-// subaccount settlement's own transaction list is always empty.
-const mainLive = () => diagMock({
-  listFor: () => [settlementItem(12085311, 'success')],
-  mainListFor: () => [{ ...settlementItem(12085310, 'success'), total_amount: 2500, effective_amount: 2500 }],
-  txFor: (id) => (id === '12085310' ? ['ref-diag-1'] : []),
-});
+// ---- main-account match (Paystack support: the reference is listed in the MAIN settlement) ----
+const mySub = { id: 77, subaccount_code: 'ACCT_diag' };
+const splitTx = (reference, share, sub = mySub) => ({ reference, subaccount: sub, fees_split: { paystack: 1500, integration: 1000, subaccount: share } });
+const mainSettlement = (id, o = {}) => ({ ...settlementItem(id, 'success'), total_amount: 1000, effective_amount: 1000, ...o });
+const subSettlement = (id, status = 'success') => settlementItem(id, status);
+// main settlement 12085310 holds the donation; subaccount payout 12085311 should be NGN 975.00 (97,500 kobo)
+function pairMock({ txsInMain = [splitTx('ref-diag-1', 97500)], sub = [subSettlement(12085311, 'success')], main = [mainSettlement(12085310)], candidates } = {}) {
+  return diagMock({
+    listFor: () => sub,
+    mainListFor: () => main,
+    txFor: (id) => (id === '12085310' ? txsInMain : []),
+    ...(candidates ? { candidates } : {}),
+  });
+}
+const onlyMainLink = (r) => r.diagnostics.main_account.found[0].link;
 
-test('check payouts: reference found in a main-account settlement is reported with the next subaccount settlement, never proposed', async () => {
+test('main match: reference in main settlement N + subaccount settlement N+1 with the exact beneficiary share -> Settled, via the pair', async () => {
   calls = [];
-  mock = mainLive();
-  const r = await (await reconcile(false)).json();
-  assert.deepEqual(r.will_change, { settled: 0, processing: 0, failed: 0 }, 'a main-account listing alone is not payout evidence');
-  assert.equal(r.changes.length, 0);
-  assert.equal(patchesTo('donations').length, 0);
-  const main = r.diagnostics.main_account;
-  assert.equal(main.ran, true);
-  assert.equal(main.settlements_listed, 1);
-  assert.equal(main.settlements_opened, 1);
-  assert.equal(main.found.length, 1);
-  assert.equal(main.found[0].reference, 'ref-diag-1');
-  assert.equal(main.found[0].settlement_id, '12085310');
-  assert.equal(main.found[0].next_subaccount_settlement.id, '12085311');
-  assert.equal(main.found[0].next_subaccount_settlement.total_amount, 97500);
-  // The main account is queried with Paystack's documented subaccount=none.
-  assert.ok(paystackListCalls().some((c) => new URL(c.url).searchParams.get('subaccount') === 'none'));
+  mock = pairMock();
+  const pre = await (await reconcile(false)).json();
+  assert.deepEqual(pre.will_change, { settled: 1, processing: 0, failed: 0 });
+  assert.equal(patchesTo('donations').length, 0, 'preview saves nothing');
+  assert.deepEqual(pre.changes[0], { reference: 'ref-diag-1', from: 'pending_payout', to: 'settled', settlement_id: '12085311', settlement_status: 'success', via: 'paystack_main_settlement_pair', main_settlement_id: '12085310' });
+  assert.deepEqual(onlyMainLink(pre), { confirmed: true, basis: 'paystack_transaction_split', expected_amount: 97500, reason: null });
+  assert.ok(paystackListCalls().some((c) => new URL(c.url).searchParams.get('subaccount') === 'none'), 'uses the documented subaccount=none');
 
-  const html = loadPayoutPanelRenderer().renderPayoutCheck(r).html;
-  assert.match(html, /Main-account settlements/);
-  assert.match(html, /ref-diag-1 is in main settlement #12085310/);
-  assert.match(html, /Subaccount settlement #12085311 \(success, NGN 975\.00\) comes right after it/);
-  assert.match(html, /Paystack has not confirmed that link, so nothing is marked Settled/);
-  assert.doesNotMatch(html, /applyPayoutsBtn/);
+  const html = loadPayoutPanelRenderer().renderPayoutCheck(pre);
+  assert.equal(html.total, 1);
+  assert.match(html.html, /Confirmed:<\/strong> subaccount settlement #12085311 \(success, NGN 975\.00\) equals the beneficiary share/);
+  assert.match(html.html, /reference found in main settlement #12085310, amounts match/);
+  assert.match(html.html, /id="applyPayoutsBtn"/);
+
+  calls = [];
+  const done = await (await reconcile(true)).json();
+  assert.equal(done.applied, 1);
+  const body = JSON.parse(patchesTo('donations')[0].init.body);
+  assert.equal(body.payout_status, 'settled');
+  assert.equal(body.payout_settlement_id, '12085311');
+  assert.equal(body.payout_confirmed_via, 'paystack_main_settlement_pair');
+  assert.match(patchesTo('donations')[0].url, /payout_status=in\.\(pending_payout,processing,failed\)/, 'conditional update: never overwrites a settled row');
 });
 
-test('check payouts: main-account look is skipped when the subaccount settlement already proves the payout', async () => {
+test('main match: the main settlement\'s own status is irrelevant; the subaccount payout status decides', async () => {
+  calls = [];
+  // Real screenshot: main #12146118 is pending (platform share) while the beneficiary payout #12146119 is success.
+  mock = pairMock({ main: [mainSettlement(12085310, { status: 'pending' })] });
+  assert.equal((await (await reconcile(false)).json()).will_change.settled, 1);
+  mock = pairMock({ sub: [subSettlement(12085311, 'processing')], main: [mainSettlement(12085310, { status: 'success' })] });
+  const r = await (await reconcile(false)).json();
+  assert.deepEqual(r.will_change, { settled: 0, processing: 1, failed: 0 }, 'a successful MAIN settlement never settles a processing payout');
+});
+
+test('main match: works from the recorded settled_amount when Paystack\'s transaction items carry no subaccount details', async () => {
+  calls = [];
+  mock = pairMock({ txsInMain: ['ref-diag-1'] }); // txItem has subaccount: {}
+  const r = await (await reconcile(false)).json();
+  assert.equal(r.will_change.settled, 1);
+  assert.deepEqual(onlyMainLink(r), { confirmed: true, basis: 'recorded_settled_amount', expected_amount: 97500, reason: null });
+});
+
+test('main match: amount mismatch, missing N+1, other subaccount, no recorded share or an unknown status -> NOT settled, reason shown', async () => {
+  const cases = [
+    ['amount differs', pairMock({ sub: [{ ...subSettlement(12085311, 'success'), total_amount: 97499 }] }), /does not equal the beneficiary share/],
+    ['no N+1', pairMock({ sub: [subSettlement(12085399, 'success')] }), /no settlement for this subaccount follows/],
+    ['different subaccount', pairMock({ txsInMain: [splitTx('ref-diag-1', 97500, { id: 999, subaccount_code: 'ACCT_other' })] }), /used a different subaccount/],
+    ['no beneficiary share from Paystack', pairMock({ txsInMain: [{ reference: 'ref-diag-1', subaccount: mySub, fees_split: {} }] }), /gave no beneficiary share/],
+    ['no recorded share', pairMock({ txsInMain: ['ref-diag-1'], candidates: [{ ...DIAG_DONATION, settled_amount: 0 }] }), /no recorded beneficiary share/],
+    ['unknown N+1 status', pairMock({ sub: [subSettlement(12085311, 'reversed')] }), /status this platform does not recognise/],
+  ];
+  for (const [name, m, reason] of cases) {
+    calls = [];
+    mock = m;
+    const r = await (await reconcile(false)).json();
+    assert.deepEqual(r.will_change, { settled: 0, processing: 0, failed: 0 }, name);
+    assert.equal(r.changes.length, 0, name);
+    assert.equal(onlyMainLink(r).confirmed, false, name);
+    assert.match(onlyMainLink(r).reason, reason, name);
+    assert.equal(patchesTo('donations').length, 0, name);
+    assert.match(loadPayoutPanelRenderer().renderPayoutCheck(r).html, /not confirmed:<\/strong>/, name);
+  }
+});
+
+test('main match: two donations to this subaccount in one main settlement are matched against their SUM', async () => {
+  calls = [];
+  const two = [DIAG_DONATION, { id: 12, paystack_reference: 'ref-diag-2', payout_status: 'pending_payout', created_at: '2026-10-12T23:30:00.000Z', settled_amount: 97.5 }];
+  mock = pairMock({ txsInMain: [splitTx('ref-diag-1', 97500), splitTx('ref-diag-2', 9750)], sub: [subSettlement(12085311, 'success')].map((x) => ({ ...x, total_amount: 107250 })), candidates: two });
+  const r = await (await reconcile(false)).json();
+  assert.equal(r.will_change.settled, 2);
+  // If the payout does not cover both shares, neither is settled.
+  mock = pairMock({ txsInMain: [splitTx('ref-diag-1', 97500), splitTx('ref-diag-2', 9750)], candidates: two });
+  assert.equal((await (await reconcile(false)).json()).will_change.settled, 0);
+});
+
+test('main match: a main settlement holding another donation to the same subaccount fails closed on the recorded-amount basis', async () => {
+  calls = [];
+  // Paystack gives no subaccount details, and the main settlement also holds a donation this campaign does not track.
+  mock = pairMock({ txsInMain: ['ref-diag-1', 'someone-elses-ref'], sub: [subSettlement(12085311, 'success')].map((x) => ({ ...x, total_amount: 97500 + 5000 })) });
+  const r = await (await reconcile(false)).json();
+  assert.equal(r.will_change.settled, 0);
+});
+
+test('main match: skipped when the subaccount settlement already proves the payout; budget exhausted mid-settlement judges nothing', async () => {
   calls = [];
   mock = diagMock({ listFor: () => [settlementItem(900, 'success')], txFor: () => ['ref-diag-1'] });
   const r = await (await reconcile(false)).json();
   assert.equal(r.diagnostics.main_account.ran, false);
   assert.ok(!paystackListCalls().some((c) => new URL(c.url).searchParams.get('subaccount') === 'none'));
-});
 
-test('check payouts: reference not in any main settlement, or a Paystack error there, is shown and changes nothing', async () => {
-  calls = [];
-  mock = diagMock({ listFor: () => [], mainListFor: () => [settlementItem(7, 'success')], txFor: () => ['other'] });
-  let r = await (await reconcile(false)).json();
-  assert.equal(r.diagnostics.main_account.found.length, 0);
-  assert.match(loadPayoutPanelRenderer().renderPayoutCheck(r).html, /None of the donation\(s\) checked was found in the main-account settlements/);
-
-  const inner = diagMock({ listFor: () => [], mainListFor: () => [] });
-  mock = (url, init) => (url.startsWith('https://api.paystack.co/settlement?') && new URL(url).searchParams.get('subaccount') === 'none'
-    ? Response.json({ status: false, message: 'Not allowed' }, { status: 403 }) : inner(url, init));
-  r = await (await reconcile(false)).json();
-  assert.equal(r.diagnostics.main_account.error, 'Not allowed');
-  assert.equal(r.changes.length, 0);
-  assert.match(loadPayoutPanelRenderer().renderPayoutCheck(r).html, /Paystack error while reading them: Not allowed/);
-});
-
-test('check payouts: the main-account look respects the call budget', async () => {
   calls = [];
   mock = diagMock({
     listFor: () => [],
-    mainListFor: () => Array.from({ length: 50 }, (_, i) => settlementItem(1000 + i, 'success')),
+    mainListFor: () => Array.from({ length: 50 }, (_, i) => mainSettlement(1000 + i)),
     txFor: () => ['unrelated'],
   });
-  const r = await (await reconcile(false)).json();
+  const t = await (await reconcile(false)).json();
   assert.ok(calls.filter((c) => c.url.startsWith('https://api.paystack.co/')).length <= 24);
-  assert.equal(r.truncated, true);
+  assert.equal(t.truncated, true);
+  assert.equal(t.will_change.settled, 0);
+});
+
+test('main match: a Paystack error while reading the main account is shown and changes nothing', async () => {
+  calls = [];
+  const inner = diagMock({ listFor: () => [], mainListFor: () => [] });
+  mock = (url, init) => (url.startsWith('https://api.paystack.co/settlement?') && new URL(url).searchParams.get('subaccount') === 'none'
+    ? Response.json({ status: false, message: 'Not allowed' }, { status: 403 }) : inner(url, init));
+  const r = await (await reconcile(false)).json();
+  assert.equal(r.diagnostics.main_account.error, 'Not allowed');
+  assert.equal(r.changes.length, 0);
+  assert.match(loadPayoutPanelRenderer().renderPayoutCheck(r).html, /Paystack error while reading them: Not allowed/);
+  mock = diagMock({ listFor: () => [], mainListFor: () => [mainSettlement(7)], txFor: () => ['other'] });
+  const none = await (await reconcile(false)).json();
+  assert.match(loadPayoutPanelRenderer().renderPayoutCheck(none).html, /None of the donation\(s\) checked was found in the main-account settlements/);
 });
