@@ -878,7 +878,7 @@ test('main match: reference in main settlement N + subaccount settlement N+1 wit
   assert.deepEqual(pre.will_change, { settled: 1, processing: 0, failed: 0 });
   assert.equal(patchesTo('donations').length, 0, 'preview saves nothing');
   assert.deepEqual(pre.changes[0], { reference: 'ref-diag-1', from: 'pending_payout', to: 'settled', settlement_id: '12085311', settlement_status: 'success', via: 'paystack_main_settlement_pair', main_settlement_id: '12085310' });
-  assert.deepEqual(onlyMainLink(pre), { confirmed: true, basis: 'paystack_transaction_split', expected_amount: 97500, reason: null });
+  assert.deepEqual(onlyMainLink(pre), { confirmed: true, basis: 'paystack_transaction_split', expected_amount: 97500, reason: null, transaction_fields: null });
   assert.ok(paystackListCalls().some((c) => new URL(c.url).searchParams.get('subaccount') === 'none'), 'uses the documented subaccount=none');
 
   const html = loadPayoutPanelRenderer().renderPayoutCheck(pre);
@@ -912,7 +912,7 @@ test('main match: works from the recorded settled_amount when Paystack\'s transa
   mock = pairMock({ txsInMain: ['ref-diag-1'] }); // txItem has subaccount: {}
   const r = await (await reconcile(false)).json();
   assert.equal(r.will_change.settled, 1);
-  assert.deepEqual(onlyMainLink(r), { confirmed: true, basis: 'recorded_settled_amount', expected_amount: 97500, reason: null });
+  assert.deepEqual(onlyMainLink(r), { confirmed: true, basis: 'recorded_settled_amount', expected_amount: 97500, reason: null, transaction_fields: null });
 });
 
 test('main match: amount mismatch, missing N+1, other subaccount, no recorded share or an unknown status -> NOT settled, reason shown', async () => {
@@ -920,8 +920,8 @@ test('main match: amount mismatch, missing N+1, other subaccount, no recorded sh
     ['amount differs', pairMock({ sub: [{ ...subSettlement(12085311, 'success'), total_amount: 97499 }] }), /does not equal the beneficiary share/],
     ['no N+1', pairMock({ sub: [subSettlement(12085399, 'success')] }), /no settlement for this subaccount follows/],
     ['different subaccount', pairMock({ txsInMain: [splitTx('ref-diag-1', 97500, { id: 999, subaccount_code: 'ACCT_other' })] }), /used a different subaccount/],
-    ['no beneficiary share from Paystack', pairMock({ txsInMain: [{ reference: 'ref-diag-1', subaccount: mySub, fees_split: {} }] }), /gave no beneficiary share/],
-    ['no recorded share', pairMock({ txsInMain: ['ref-diag-1'], candidates: [{ ...DIAG_DONATION, settled_amount: 0 }] }), /no recorded beneficiary share/],
+    ['no share from Paystack and another untracked transaction of this subaccount in N', pairMock({ txsInMain: [{ reference: 'ref-diag-1', subaccount: mySub, fees_split: {} }, { reference: 'untracked-ref', subaccount: mySub, fees_split: null }] }), /not every transaction of this subaccount/],
+    ['no recorded share', pairMock({ txsInMain: ['ref-diag-1'], candidates: [{ ...DIAG_DONATION, settled_amount: 0 }] }), /neither Paystack nor the donation record gives the beneficiary share/],
     ['unknown N+1 status', pairMock({ sub: [subSettlement(12085311, 'reversed')] }), /status this platform does not recognise/],
   ];
   for (const [name, m, reason] of cases) {
@@ -987,4 +987,23 @@ test('main match: a Paystack error while reading the main account is shown and c
   mock = diagMock({ listFor: () => [], mainListFor: () => [mainSettlement(7)], txFor: () => ['other'] });
   const none = await (await reconcile(false)).json();
   assert.match(loadPayoutPanelRenderer().renderPayoutCheck(none).html, /None of the donation\(s\) checked was found in the main-account settlements/);
+});
+
+test('main match: Paystack names this subaccount but sends no split figure (the live case) -> falls back to the recorded share, and a failure lists field names only', async () => {
+  calls = [];
+  mock = pairMock({ txsInMain: [{ reference: 'ref-diag-1', subaccount: mySub, fees_split: {} }] });
+  const r = await (await reconcile(false)).json();
+  assert.equal(r.will_change.settled, 1);
+  assert.deepEqual(onlyMainLink(r), { confirmed: true, basis: 'recorded_settled_amount', expected_amount: 97500, reason: null, transaction_fields: null });
+
+  // Same data but the recorded share does not match the payout: not settled, and only field NAMES are reported.
+  mock = pairMock({ txsInMain: [{ reference: 'ref-diag-1', subaccount: mySub, fees_split: {}, customer: { email: 'donor@example.com' } }], sub: [{ ...subSettlement(12085311), total_amount: 90000 }] });
+  const bad = await (await reconcile(false)).json();
+  assert.equal(bad.will_change.settled, 0);
+  const f = onlyMainLink(bad).transaction_fields;
+  assert.ok(f.transaction.includes('reference') && f.transaction.includes('customer'));
+  assert.ok(!JSON.stringify(bad).includes('donor@example.com'), 'field values are never reported');
+  const html = loadPayoutPanelRenderer().renderPayoutCheck(bad).html;
+  assert.match(html, /Fields Paystack sent: /);
+  assert.doesNotMatch(html, /none of the settlements that were read contains/, 'the old hint is hidden once the main account found the reference');
 });
