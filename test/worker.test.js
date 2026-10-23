@@ -1028,3 +1028,20 @@ test('edit campaign: hidden beneficiary inputs are not required while editing, a
   assert.match(edit, /setNewBeneficiaryRequired\(false\)/);
   assert.match(create, /setNewBeneficiaryRequired\(true\)/);
 });
+
+test('admin table: "Paystack: verified" is a green badge, "NOT verified" a yellow one, "not checked" stays plain', () => {
+  const html = fs.readFileSync(new URL('../public/admin/dashboard.html', import.meta.url), 'utf8');
+  const m = html.match(/\/\/ <beneficiary-cell>([\s\S]*?)\/\/ <\/beneficiary-cell>/);
+  assert.ok(m, 'markers present');
+  const { beneficiaryStatusCellHtml: cell } = new Function(m[1] + '\nreturn { beneficiaryStatusCellHtml };')();
+  const base = { has_subaccount: true, settlement_enabled: true, verification_status: 'verified' };
+  assert.match(cell({ ...base, paystack_is_verified: true }), /<span class="badge active">Paystack: verified<\/span>/);
+  assert.match(cell({ ...base, paystack_is_verified: false }), /<span class="badge archived">Paystack: NOT verified<\/span>/);
+  const unknown = cell({ ...base, paystack_is_verified: null });
+  assert.match(unknown, /Paystack: not checked/);
+  assert.doesNotMatch(unknown, /badge (active|archived)">Paystack/);
+  assert.doesNotMatch(cell({ ...base, has_subaccount: false, paystack_is_verified: true }), /Paystack:/, 'no subaccount: nothing claimed');
+  // The existing badges are untouched.
+  assert.match(cell({ ...base, paystack_is_verified: true }), /Split Enabled/);
+  assert.match(cell({ ...base, settlement_enabled: false, paystack_is_verified: true }), /Verified · Split Paused/);
+});
