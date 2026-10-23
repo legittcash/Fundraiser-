@@ -1263,6 +1263,7 @@
   // A compact, honest summary for the table's "Beneficiary" column —
   // full detail (and the edit form) only appears once the admin opens
   // the Beneficiary modal for that specific campaign.
+  // <beneficiary-cell>
   function beneficiaryStatusCellHtml(summary) {
     if (!summary) {
       return '<span class="muted-cell">Not set up</span>';
@@ -1271,10 +1272,12 @@
     // verification: a local "Verified" does not mean Paystack verified it.
     let ps = '';
     if (summary.has_subaccount) {
+      // Green when Paystack says verified, yellow when it says not verified;
+      // plain grey text when it has not been checked yet (no claim either way).
       ps = summary.paystack_is_verified === true
-        ? '<div class="muted-cell">Paystack: verified</div>'
+        ? '<div style="margin-top:4px;"><span class="badge active">Paystack: verified</span></div>'
         : summary.paystack_is_verified === false
-          ? '<div class="muted-cell" style="color:#92400e;">Paystack: NOT verified</div>'
+          ? '<div style="margin-top:4px;"><span class="badge archived">Paystack: NOT verified</span></div>'
           : '<div class="muted-cell">Paystack: not checked</div>';
     }
     if (summary.settlement_enabled) {
@@ -1288,6 +1291,7 @@
     }
     return '<span class="muted-cell">Pending verification</span>';
   }
+  // </beneficiary-cell>
 
   searchInput.addEventListener('input', () => {
     clearTimeout(searchDebounceTimer);
