@@ -2256,7 +2256,8 @@
           out += `<strong>Confirmed:</strong> subaccount settlement #${escapeHtml(n.id)} (${escapeHtml(n.status || 'no status')}, ${fmt(n.total_amount, n.currency)}) equals the beneficiary share of that main settlement (${fmt(link.expected_amount, n.currency)}), so it is this donation's payout.</div>`;
         } else {
           out += (n ? `Subaccount settlement #${escapeHtml(n.id)} (${escapeHtml(n.status || 'no status')}, ${fmt(n.total_amount, n.currency)}) follows it, but ` : '') +
-            `<strong>not confirmed:</strong> ${escapeHtml(link.reason || 'the link could not be checked')}. Nothing is marked Settled.</div>`;
+            `<strong>not confirmed:</strong> ${escapeHtml(link.reason || 'the link could not be checked')}. Nothing is marked Settled.` +
+            (f.shape ? ` <span>(Fields Paystack sent: subaccount ${escapeHtml(f.shape.subaccount_fields ? f.shape.subaccount_fields.join(', ') : 'none')}; fees_split ${escapeHtml(f.shape.fees_split_type)}${f.shape.fees_split_fields ? ' [' + escapeHtml(f.shape.fees_split_fields.join(', ')) + ']' : ''}.)</span>` : '') + '</div>';
         }
       }
       if (!(Array.isArray(main.found) && main.found.length) && !main.error) {
@@ -2274,7 +2275,7 @@
       out += '<div class="muted-cell" style="margin-top:6px;">Paystack did not list any settlement for this subaccount. Either nothing has been settled to it yet, or Paystack does not list it under this subaccount. Compare with Paystack Dashboard → Payouts.</div>';
     } else if (openedTotal === 0) {
       out += '<div class="muted-cell" style="margin-top:6px;">Paystack listed settlement(s), but none has a status this platform recognises, so none could be used as evidence.</div>';
-    } else if (foundTotal === 0) {
+    } else if (foundTotal === 0 && !(d.main_account && Array.isArray(d.main_account.found) && d.main_account.found.length)) {
       out += '<div class="muted-cell" style="margin-top:6px;">Paystack listed settlement(s), but none of the settlements that were read contains the donation(s) being checked.</div>';
     }
     return out;
@@ -2290,9 +2291,13 @@
     const evidence = (data.changes || []).slice(0, 10).map((x) =>
       `<div class="muted-cell">${escapeHtml(x.reference)}: ${escapeHtml(PAYOUT_LABELS[x.from] || x.from)} → ${escapeHtml(PAYOUT_LABELS[x.to] || x.to)} (Paystack settlement ${escapeHtml(x.settlement_id)}, ${escapeHtml(x.settlement_status)}${x.main_settlement_id ? '; reference found in main settlement #' + escapeHtml(x.main_settlement_id) + ', amounts match' : ''})</div>`
     ).join('');
+    const mainFound = (data.diagnostics && data.diagnostics.main_account && Array.isArray(data.diagnostics.main_account.found)) ? data.diagnostics.main_account.found.filter((f) => !(f.link && f.link.confirmed)).length : 0;
+    const unmatched = Number(data.unmatched) || 0;
+    const notAtAll = Math.max(0, unmatched - mainFound);
     const stillWaiting = checked === 0
       ? '<div>No donation on this campaign is waiting for a payout check (none is Pending payout, Processing or Failed under this beneficiary\'s current subaccount).</div>'
-      : `<div>${Number(data.unmatched) || 0} donation(s) not found in any Paystack settlement yet — they stay <strong>Pending payout</strong>.</div>`;
+      : (mainFound ? `<div>${mainFound} donation(s) found in a main-account settlement, but the beneficiary\'s payout could not be confirmed from the amounts — they stay <strong>Pending payout</strong> (details below).</div>` : '') +
+        (notAtAll || !mainFound ? `<div>${notAtAll} donation(s) not found in any Paystack settlement yet — they stay <strong>Pending payout</strong>.</div>` : '');
     const details = payoutLookupDetailsHtml(data);
 
     if (data.mode === 'applied') {
