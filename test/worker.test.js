@@ -1007,3 +1007,24 @@ test('main match: Paystack names this subaccount but sends no split figure (the 
   assert.match(html, /Fields Paystack sent: /);
   assert.doesNotMatch(html, /none of the settlements that were read contains/, 'the old hint is hidden once the main account found the reference');
 });
+
+// =====================================================================
+// Edit campaign: the hidden beneficiary inputs must not block Save
+// =====================================================================
+test('edit campaign: hidden beneficiary inputs are not required while editing, and are required again when creating', () => {
+  const html = fs.readFileSync(new URL('../public/admin/dashboard.html', import.meta.url), 'utf8');
+  const m = html.match(/\/\/ <beneficiary-required>([\s\S]*?)\/\/ <\/beneficiary-required>/);
+  assert.ok(m, 'helper markers are present');
+  const { setNewBeneficiaryRequired } = new Function(m[1] + '\nreturn { setNewBeneficiaryRequired };')();
+  const els = Object.fromEntries(['newBenefName', 'newBenefBankSearch', 'newBenefAccountNumber'].map((id) => [id, { required: true }]));
+  setNewBeneficiaryRequired(false, (id) => els[id]);
+  assert.deepEqual(Object.values(els).map((e) => e.required), [false, false, false]);
+  setNewBeneficiaryRequired(true, (id) => els[id]);
+  assert.deepEqual(Object.values(els).map((e) => e.required), [true, true, true]);
+
+  // openEditModal turns it off and openCreateModal turns it on again.
+  const edit = html.slice(html.indexOf('function openEditModal'), html.indexOf('window.openEditModal'));
+  const create = html.slice(html.indexOf('function openCreateModal'), html.indexOf('function openEditModal'));
+  assert.match(edit, /setNewBeneficiaryRequired\(false\)/);
+  assert.match(create, /setNewBeneficiaryRequired\(true\)/);
+});
