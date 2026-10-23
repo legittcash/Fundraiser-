@@ -1321,6 +1321,20 @@
   document.getElementById('newCampaignBtn').addEventListener('click', () => openCreateModal());
   document.getElementById('cancelModalBtn').addEventListener('click', closeModal);
 
+  // <beneficiary-required>
+  // The beneficiary section inputs are `required`, but the section is hidden
+  // while EDITING an existing campaign. A browser refuses to submit a form
+  // that has an empty required field it cannot show ("An invalid form
+  // control is not focusable"), so Save did nothing at all. They are
+  // therefore only required while the section is visible (creating).
+  function setNewBeneficiaryRequired(required, getEl = (id) => document.getElementById(id)) {
+    for (const id of ['newBenefName', 'newBenefBankSearch', 'newBenefAccountNumber']) {
+      const el = getEl(id);
+      if (el) el.required = required;
+    }
+  }
+  // </beneficiary-required>
+
   function openCreateModal() {
     modalTitle.textContent = 'New Campaign';
     campaignForm.reset();
@@ -1335,6 +1349,7 @@
     // The beneficiary/payout section only makes sense when creating a
     // brand-new campaign — reset it and show it.
     document.getElementById('newCampaignBeneficiarySection').style.display = 'block';
+    setNewBeneficiaryRequired(true);
     document.getElementById('newBenefName').value = '';
     document.getElementById('newBenefBankSearch').value = '';
     document.getElementById('newBenefBankCode').value = '';
@@ -1375,6 +1390,7 @@
     // Verify/Enable Settlement), so this creation-only section is
     // hidden while editing.
     document.getElementById('newCampaignBeneficiarySection').style.display = 'none';
+    setNewBeneficiaryRequired(false);
 
     uploadedImageUrl = campaign.image_url || null;
     if (uploadedImageUrl) {
