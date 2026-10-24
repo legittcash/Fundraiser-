@@ -44,6 +44,28 @@
     font-size: 0.95rem;
     font-family: inherit;
   }
+  .password-wrap { position: relative; }
+  .password-wrap input { padding-right: 46px; }
+  button.toggle-password {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: 44px;
+    margin: 0;
+    padding: 0;
+    background: transparent;
+    color: var(--text-muted);
+    border-radius: 0 10px 10px 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  button.toggle-password:hover { background: transparent; color: var(--text-dark); }
+  button.toggle-password svg { width: 20px; height: 20px; }
+  button.toggle-password .icon-hide { display: none; }
+  button.toggle-password.showing .icon-show { display: none; }
+  button.toggle-password.showing .icon-hide { display: block; }
   button {
     width: 100%;
     background: var(--pink);
@@ -77,7 +99,19 @@
     <input type="text" id="username" autocomplete="username" required />
 
     <label for="password">Password</label>
-    <input type="password" id="password" autocomplete="current-password" required />
+    <div class="password-wrap">
+      <input type="password" id="password" autocomplete="current-password" required />
+      <button type="button" class="toggle-password" id="togglePassword" aria-label="Show password" aria-pressed="false">
+        <!-- eye: password is hidden, click to show -->
+        <svg class="icon-show" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12z"/><circle cx="12" cy="12" r="3"/>
+        </svg>
+        <!-- eye with a slash: password is visible, click to hide -->
+        <svg class="icon-hide" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M17.94 17.94A10.94 10.94 0 0 1 12 19C5 19 1 12 1 12a18.5 18.5 0 0 1 5.06-5.94"/><path d="M9.9 4.24A9.1 9.1 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/><path d="M14.12 14.12a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/>
+        </svg>
+      </button>
+    </div>
 
     <button type="submit" id="loginBtn">Log In</button>
   </form>
@@ -100,6 +134,18 @@
   const form = document.getElementById('loginForm');
   const loginBtn = document.getElementById('loginBtn');
   const errorMsg = document.getElementById('errorMsg');
+
+  // Eye button inside the password box: show / hide what has been typed.
+  const passwordInput = document.getElementById('password');
+  const togglePassword = document.getElementById('togglePassword');
+  togglePassword.addEventListener('click', () => {
+    const show = passwordInput.type === 'password';
+    passwordInput.type = show ? 'text' : 'password';
+    togglePassword.classList.toggle('showing', show);
+    togglePassword.setAttribute('aria-pressed', String(show));
+    togglePassword.setAttribute('aria-label', show ? 'Hide password' : 'Show password');
+    passwordInput.focus();
+  });
 
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
