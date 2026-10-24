@@ -1066,3 +1066,39 @@ test('admin login: the password box has an eye button on its right that toggles 
   assert.match(html, /button\.toggle-password \{[^}]*right: 0;/);
   assert.match(html, /passwordInput\.type = show \? 'text' : 'password'/);
 });
+
+test('payout panel: a processing-only change says it is not settled and is labelled that way; settled changes keep the plain label', () => {
+  const { renderPayoutCheck } = loadPayoutPanelRenderer();
+  const proc = renderPayoutCheck(baseResult({
+    settlements_listed: 1, will_change: { settled: 0, processing: 1, failed: 0 }, unmatched: 0,
+    changes: [{ reference: 'ref-diag-1', from: 'pending_payout', to: 'processing', settlement_id: '12208012', settlement_status: 'pending', via: 'paystack_main_settlement_pair', main_settlement_id: '12208011' }],
+    diagnostics: { ...baseResult().diagnostics, settlements_total: 1, settlements: [diagRow()] },
+  }));
+  assert.equal(proc.total, 1);
+  assert.match(proc.html, /Save 1 as "Payout processing" \(not settled yet\)/);
+  assert.match(proc.html, /does not change Amount Settled/);
+  const settled = renderPayoutCheck(baseResult({
+    settlements_listed: 1, will_change: { settled: 1, processing: 0, failed: 0 }, unmatched: 0,
+    changes: [{ reference: 'ref-diag-1', from: 'pending_payout', to: 'settled', settlement_id: '900', settlement_status: 'success' }],
+    diagnostics: { ...baseResult().diagnostics, settlements_total: 1, settlements: [diagRow({ donations_found: 1 })] },
+  }));
+  assert.match(settled.html, /Save these 1 change\(s\)/);
+  assert.doesNotMatch(settled.html, /not settled yet/);
+  const mixed = renderPayoutCheck(baseResult({ will_change: { settled: 1, processing: 1, failed: 0 }, unmatched: 0 }));
+  assert.match(mixed.html, /Save these 2 change\(s\)/);
+});
+
+test('admin table: Payout processing is its own line, separate from Pending payout', () => {
+  const html = fs.readFileSync(new URL('../public/admin/dashboard.html', import.meta.url), 'utf8');
+  const m = html.match(/\/\/ <payout-cell>([\s\S]*?)\/\/ <\/payout-cell>/);
+  assert.ok(m);
+  const { payoutCellHtml } = new Function(m[1] + '\nreturn { payoutCellHtml };')();
+  const both = payoutCellHtml({ payout: { settled: 975, pending: 500, processing: 195, failed: 0 } });
+  assert.match(both, /Settled: <strong>₦975<\/strong>/);
+  assert.match(both, /Pending payout: ₦500/);
+  assert.match(both, /Payout processing: ₦195/);
+  const procOnly = payoutCellHtml({ payout: { settled: 0, pending: 0, processing: 195, failed: 0 } });
+  assert.doesNotMatch(procOnly, /Pending payout/);
+  assert.match(procOnly, /Payout processing: ₦195/);
+  assert.equal(payoutCellHtml({ payout: null }), '<span class="muted-cell">—</span>');
+});
