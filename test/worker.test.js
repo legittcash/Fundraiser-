@@ -384,7 +384,7 @@ test('wrangler.jsonc: worker name, entry, ./public assets with ASSETS binding', 
 // Payout status / Paystack subaccount verification
 // =====================================================================
 import { canMovePayoutStatus, payoutStatusFromSettlement } from '../lib/payout-evidence.js';
-import { getAmountSettled, getPayoutBreakdown } from '../lib/amount-settled.js';
+import { getAmountSettled, getAmountAwaitingPayout, getPayoutBreakdown } from '../lib/amount-settled.js';
 
 const adminHeaders = async () => ({ cookie: (await login()).split(';')[0], 'content-type': 'application/json' });
 const patchesTo = (table) => calls.filter((c) => c.init.method === 'PATCH' && c.url.includes('/rest/v1/' + table));
@@ -1101,4 +1101,63 @@ test('admin table: Payout processing is its own line, separate from Pending payo
   assert.doesNotMatch(procOnly, /Pending payout/);
   assert.match(procOnly, /Payout processing: ₦195/);
   assert.equal(payoutCellHtml({ payout: null }), '<span class="muted-cell">—</span>');
+});
+
+// =====================================================================
+// Public "Awaiting payout (expected)"
+// =====================================================================
+test('awaiting payout: sums only pending/processing expected shares of ONE campaign, in kobo', async () => {
+  calls = [];
+  mock = (url) => (url.includes('/rest/v1/donations') ? Response.json([{ settled_amount: 97.5 }, { settled_amount: '195' }, { settled_amount: 0.1 }, { settled_amount: 0.2 }, { settled_amount: null }]) : Response.json([]));
+  assert.equal(await getAmountAwaitingPayout('https://x.supabase.co', {}, 5), 292.8, 'exact: no floating point drift (0.1 + 0.2)');
+  const q = calls.find((c) => c.url.includes('/rest/v1/donations')).url;
+  assert.match(q, /fundraiser_id=eq\.5/);
+  assert.match(q, /payout_status=in\.\(pending_payout,processing\)/);
+  assert.doesNotMatch(q, /failed|settled\)/, 'failed and settled payouts are never part of it');
+  assert.match(q, /select=settled_amount(&|$)/, 'reads only the amount column');
+
+  mock = () => Response.json([]);
+  assert.equal(await getAmountAwaitingPayout('https://x.supabase.co', {}, 5), 0);
+  mock = () => new Response('missing column', { status: 400 });
+  assert.equal(await getAmountAwaitingPayout('https://x.supabase.co', {}, 5), null, 'unknown, not a misleading 0');
+});
+
+test('/api/campaign and /api/progress return amount_awaiting_payout next to amount_settled, and nothing private', async () => {
+  const CAMP = { id: 5, slug: 'ada', patient_name: 'Ada', hospital: 'H', diagnosis: 'D', story: 'S', image_url: null, goal_amount: 1000, raised_amount: 300, donor_count: 2, status: 'active', created_at: '2026-10-01' };
+  mock = (url) => {
+    if (url.includes('/rest/v1/fundraiser?')) return Response.json([CAMP]);
+    if (url.includes('/rpc/campaign_amount_settled')) return Response.json(975);
+    if (url.includes('/rest/v1/donations') && url.includes('payout_status=in.(pending_payout,processing)')) return Response.json([{ settled_amount: 195 }]);
+    if (url.includes('/rest/v1/donations')) return Response.json([]);
+    return Response.json([]);
+  };
+  const c = await (await call('/api/campaign?slug=ada')).json();
+  assert.equal(c.campaign.amount_settled, 975);
+  assert.equal(c.campaign.amount_awaiting_payout, 195);
+  const p = await (await call('/api/progress?slug=ada')).json();
+  assert.equal(p.amount_settled, 975);
+  assert.equal(p.amount_awaiting_payout, 195);
+  assert.equal('id' in p, false, 'internal id still not returned');
+  const text = JSON.stringify(c) + JSON.stringify(p);
+  for (const secret of ['account_number', 'bank_code', 'subaccount', 'phone']) assert.ok(!text.includes(secret), secret);
+
+  // Unknown (query failed) is null, so the page leaves the line out.
+  mock = (url) => {
+    if (url.includes('/rest/v1/fundraiser?')) return Response.json([CAMP]);
+    if (url.includes('/rpc/campaign_amount_settled')) return Response.json(0);
+    if (url.includes('payout_status=in.(pending_payout,processing)')) return new Response('nope', { status: 400 });
+    return Response.json([]);
+  };
+  assert.equal((await (await call('/api/campaign?slug=ada')).json()).campaign.amount_awaiting_payout, null);
+});
+
+test('public campaign page: the awaiting line is labelled "expected", sits right below Amount Settled, and is hidden at zero', () => {
+  const html = fs.readFileSync(new URL('../public/campaign.html', import.meta.url), 'utf8');
+  const settled = html.indexOf('id="amountSettledText"');
+  const awaiting = html.indexOf('id="amountAwaitingText"');
+  assert.ok(settled > 0 && awaiting > settled, 'directly after the settled line');
+  assert.match(html, /Awaiting payout \(expected\): ₦/);
+  assert.match(html, /Number\(campaign\.amount_awaiting_payout\) > 0 \? '' : 'hidden'/);
+  assert.match(html, /#amountAwaitingText\[hidden\] \{ display: none; \}/);
+  assert.match(html, /awaitingEl\.hidden = true/);
 });
