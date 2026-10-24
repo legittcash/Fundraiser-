@@ -1045,3 +1045,24 @@ test('admin table: "Paystack: verified" is a green badge, "NOT verified" a yello
   assert.match(cell({ ...base, paystack_is_verified: true }), /Split Enabled/);
   assert.match(cell({ ...base, settlement_enabled: false, paystack_is_verified: true }), /Verified · Split Paused/);
 });
+
+// =====================================================================
+// Visitor form goal description + admin login password toggle
+// =====================================================================
+test('submit-campaign: the fundraising goal has a description right after its input, in the same style as the other notes', () => {
+  const html = fs.readFileSync(new URL('../public/submit-campaign.html', import.meta.url), 'utf8');
+  const input = html.indexOf('<input type="number" id="goalAmount"');
+  const note = html.indexOf("The fundraising goal is the total amount the hospital is charging", input);
+  assert.ok(input > 0 && note > input, 'description follows the goal input');
+  const between = html.slice(input, note);
+  assert.ok(between.includes('<p class="privacy-note"'), 'uses the same note style as the other descriptions');
+  assert.ok(!between.includes('<label'), 'nothing else sits between the input and its description');
+});
+
+test('admin login: the password box has an eye button on its right that toggles show / hide', () => {
+  const html = fs.readFileSync(new URL('../public/admin/login.html', import.meta.url), 'utf8');
+  assert.match(html, /<div class="password-wrap">\s*<input type="password" id="password"[^>]*>\s*<button type="button" class="toggle-password" id="togglePassword"/);
+  assert.match(html, /\.password-wrap input \{ padding-right: 46px; \}/);
+  assert.match(html, /button\.toggle-password \{[^}]*right: 0;/);
+  assert.match(html, /passwordInput\.type = show \? 'text' : 'password'/);
+});
