@@ -24,7 +24,7 @@
 
 // We use plain "fetch" to talk to Supabase's REST API (PostgREST),
 // so we don't need to install any extra npm packages.
-import { getAmountSettled } from '../lib/amount-settled.js';
+import { getAmountSettled, getAmountAwaitingPayout } from '../lib/amount-settled.js';
 import { jsonResponse } from '../lib/http.js';
 
 export default async function handler(req, env) {
@@ -93,11 +93,13 @@ export default async function handler(req, env) {
     // lookup and is not returned, so the original three fields are
     // unchanged.
     const { id: campaignRowId, ...stats } = rows[0];
-    const amountSettled = await getAmountSettled(SUPABASE_BASE_URL, {
+    const serviceHeaders = {
       apikey: SUPABASE_SERVICE_ROLE_KEY,
       Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-    }, campaignRowId);
-    return jsonResponse(200, { ...stats, amount_settled: amountSettled });
+    };
+    const amountSettled = await getAmountSettled(SUPABASE_BASE_URL, serviceHeaders, campaignRowId);
+    const amountAwaitingPayout = await getAmountAwaitingPayout(SUPABASE_BASE_URL, serviceHeaders, campaignRowId);
+    return jsonResponse(200, { ...stats, amount_settled: amountSettled, amount_awaiting_payout: amountAwaitingPayout });
   } catch (err) {
     console.error('Unexpected error in /api/progress:', err);
     return jsonResponse(500, { error: 'Unexpected server error.' });

@@ -50,7 +50,7 @@
 // authoritatively, by api/initialize-donation.js at checkout — these
 // fields only let the PREVIEW match that reality instead of guessing.
 
-import { getAmountSettled } from '../lib/amount-settled.js';
+import { getAmountSettled, getAmountAwaitingPayout } from '../lib/amount-settled.js';
 import { jsonResponse } from '../lib/http.js';
 
 export default async function handler(req, env) {
@@ -146,6 +146,8 @@ export default async function handler(req, env) {
     // this campaign only (see lib/amount-settled.js). A single number;
     // no beneficiary or per donation data. null if it could not be read.
     const amountSettled = await getAmountSettled(SUPABASE_URL, headers, campaign.id);
+    // Expected share still waiting to be paid out (pending or processing); see lib/amount-settled.js.
+    const amountAwaitingPayout = await getAmountAwaitingPayout(SUPABASE_URL, headers, campaign.id);
 
     return jsonResponse(200, {
       campaign: {
@@ -154,6 +156,7 @@ export default async function handler(req, env) {
         platform_fee_applicable: platformFeeApplicable,
         beneficiary_verified: beneficiaryVerified,
         amount_settled: amountSettled,
+        amount_awaiting_payout: amountAwaitingPayout,
       },
     });
   } catch (err) {
