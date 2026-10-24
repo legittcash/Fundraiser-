@@ -158,6 +158,9 @@
      above the progress bar. Hidden entirely if the figure is unknown. */
   #amountSettledText { margin-top: -12px; }
   #amountSettledText[hidden] { display: none; }
+  /* Expected share still waiting to be paid out: same look, directly below. */
+  #amountAwaitingText { margin-top: -12px; }
+  #amountAwaitingText[hidden] { display: none; }
 
   /* Progress bar track */
   .progress-track {
@@ -485,6 +488,7 @@
           </div>
           <div class="goal-text" id="goalText">Goal: ₦0</div>
           <div class="goal-text" id="amountSettledText" ${Number.isFinite(Number(campaign.amount_settled)) && campaign.amount_settled !== null && Number(campaign.amount_settled) > 0 ? '' : 'hidden'}>Amount Settled to Beneficiary: ₦${(Number(campaign.amount_settled) || 0).toLocaleString()}</div>
+          <div class="goal-text" id="amountAwaitingText" ${Number(campaign.amount_awaiting_payout) > 0 ? '' : 'hidden'}>Awaiting payout (expected): ₦${(Number(campaign.amount_awaiting_payout) || 0).toLocaleString()}</div>
 
           <div class="progress-track">
             <div class="progress-fill" id="progressFill"></div>
@@ -653,6 +657,20 @@
       if (settledEl && data.amount_settled !== null && data.amount_settled !== undefined && Number(data.amount_settled) > 0) {
         settledEl.textContent = `Amount Settled to Beneficiary: ₦${Number(data.amount_settled).toLocaleString()}`;
         settledEl.hidden = false;
+      }
+
+      // Expected share still waiting to be paid out (pending or processing).
+      // Shown only above zero, and always labelled "expected": it is not a
+      // payment confirmation.
+      const awaitingEl = document.getElementById('amountAwaitingText');
+      if (awaitingEl) {
+        const waiting = Number(data.amount_awaiting_payout);
+        if (data.amount_awaiting_payout !== null && data.amount_awaiting_payout !== undefined && waiting > 0) {
+          awaitingEl.textContent = `Awaiting payout (expected): ₦${waiting.toLocaleString()}`;
+          awaitingEl.hidden = false;
+        } else if (data.amount_awaiting_payout !== null && data.amount_awaiting_payout !== undefined) {
+          awaitingEl.hidden = true; // everything has been paid out
+        }
       }
 
       // Animate the bar by setting its width — the CSS "transition" makes it slide smoothly
