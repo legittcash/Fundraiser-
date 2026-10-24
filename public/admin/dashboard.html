@@ -414,7 +414,7 @@
     <div class="stat-card"><div class="stat-value">—</div><div class="stat-label">Total Paystack fees</div></div>
     <div class="stat-card"><div class="stat-value">—</div><div class="stat-label">Total platform fees</div></div>
     <div class="stat-card"><div class="stat-value">—</div><div class="stat-label">Confirmed settled (paid out)</div></div>
-    <div class="stat-card"><div class="stat-value">—</div><div class="stat-label">Pending payout (expected share)</div></div>
+    <div class="stat-card"><div class="stat-value">—</div><div class="stat-label">Pending payout (expected share, incl. processing)</div></div>
     <div class="stat-card"><div class="stat-value">—</div><div class="stat-label">Failed payouts (expected share)</div></div>
   </div>
 
@@ -1240,17 +1240,21 @@
   // is "Pending payout". If the payout breakdown is unavailable (for example
   // supabase-payout-status.sql has not been run) nothing is shown rather than
   // a possibly misleading figure.
+  // <payout-cell>
   function payoutCellHtml(c) {
     const p = c.payout;
     if (!p) return '<span class="muted-cell">—</span>';
     const naira = (n) => `₦${Number(n || 0).toLocaleString()}`;
-    const waiting = Number(p.pending || 0) + Number(p.processing || 0);
     let html = `<div>Settled: <strong>${naira(p.settled)}</strong></div>`;
-    if (waiting > 0) html += `<div class="muted-cell">Pending payout: ${naira(waiting)}</div>`;
+    // Pending payout and Payout processing are shown separately so a saved
+    // "processing" status is visible here, not folded into "Pending".
+    if (Number(p.pending) > 0) html += `<div class="muted-cell">Pending payout: ${naira(p.pending)}</div>`;
+    if (Number(p.processing) > 0) html += `<div class="muted-cell" style="color:#1e40af;">Payout processing: ${naira(p.processing)}</div>`;
     if (Number(p.failed) > 0) html += `<div class="muted-cell" style="color:#b91c1c;">Failed: ${naira(p.failed)}</div>`;
     if (Number(p.legacy_unconfirmed) > 0) html += `<div class="muted-cell">Unconfirmed (older): ${naira(p.legacy_unconfirmed)}</div>`;
     return html;
   }
+  // </payout-cell>
 
   const PAYOUT_LABELS = {
     not_applicable: 'No beneficiary payout',
@@ -2306,6 +2310,7 @@
   function renderPayoutCheck(data) {
     const c = data.will_change || { settled: 0, processing: 0, failed: 0 };
     const total = c.settled + c.processing + c.failed;
+    const processingOnly = c.processing > 0 && c.settled === 0 && c.failed === 0;
     const checked = Number(data.donations_checked) || 0;
     const more = data.truncated ? '<div class="muted-cell">Not every settlement could be checked in one go — run it again to continue.</div>' : '';
     const evidence = (data.changes || []).slice(0, 10).map((x) =>
@@ -2330,7 +2335,8 @@
       html: `
           <div><strong>Paystack reports:</strong> ${c.settled} settled · ${c.processing} processing · ${c.failed} failed.</div>
           ${evidence}${stillWaiting}${more}${details}
-          <button type="button" class="btn-primary" id="applyPayoutsBtn" style="margin-top:8px;">Save these ${total} change(s)</button>`,
+          ${processingOnly ? '<div class="muted-cell">Paystack has not paid this out yet. Saving only records "Payout processing" (shown under Beneficiary payout and in Recent donations). It does not change Amount Settled.</div>' : ''}
+          <button type="button" class="btn-primary" id="applyPayoutsBtn" style="margin-top:8px;">${processingOnly ? `Save ${total} as "Payout processing" (not settled yet)` : `Save these ${total} change(s)`}</button>`,
       total,
     };
   }
