@@ -3,8 +3,13 @@
 > **This branch (`cloudflare-migration`) runs on Cloudflare Workers.**
 > The `main` branch still contains the original, working Vercel version and
 > is untouched. **The existing Vercel deployment can stay online as a backup
-> for the whole migration.** Nothing about Supabase, the database schema,
-> Paystack, Resend, the fee logic or the frontend design was changed.
+> for the whole migration.** The database schema, Paystack, Resend and the fee
+> logic are unchanged by the migration itself.
+>
+> **Last updated: 27 October 2026.** The sections under "Cloudflare Workers
+> version" describe the code as it is now. Everything under "Original
+> documentation (Vercel era)" is kept for background and is marked where it is
+> out of date.
 
 ---
 
@@ -44,11 +49,9 @@ the beneficiary has been paid.
   `processing`, `settled`, `failed`.
 * Only `settled` counts as **"Amount Settled"** (public campaign page, admin
   totals). It is set only by the admin **Check payouts** button
-  (`route=reconcile-payouts`), which uses Paystack's Settlement API
-  (`GET /settlement?subaccount=<id>` and `GET /settlement/:id/transactions`): a
-  donation becomes `settled` only when its reference is inside a settlement
-  whose status is `success`. The webhook never sets it, and Paystack sends no
-  settlement webhook.
+  (`route=reconcile-payouts`), from Paystack's Settlement API evidence (see
+  "How Check payouts matches a payout" below). The webhook never sets it, and
+  Paystack sends no settlement webhook.
 * **Paystack subaccount verification cannot be done through the API.** Paystack
   documents no endpoint or parameter for it. KODEP reads Paystack's own
   `is_verified` flag (Fetch Subaccount) and shows it separately from KODEP's own
@@ -57,9 +60,54 @@ the beneficiary has been paid.
 * Run `supabase-payout-status.sql` once, **before** deploying this version. Older
   donations that used to show as settled are kept, flagged
   `payout_legacy_unconfirmed`, and shown as pending until Paystack confirms them.
-* Not verified against live Paystack: the exact shape of settlement transaction
-  lists. The Check payouts button therefore shows a preview and needs a second
-  tap to save.
+* Check payouts always shows a **preview first** and saves nothing until you tap
+  the second button. Saving only moves a donation forward
+  (`pending_payout`/`processing`/`failed` → the status Paystack reports); it
+  never overwrites a donation that is already `settled`.
+
+### How Check payouts matches a payout
+
+Verified against the live Paystack account in October 2026 (and confirmed in
+writing by Paystack support):
+
+* A charge that is split to a subaccount produces **two** settlements: one for
+  the **main account** (your platform share) and one for the **subaccount**
+  (the beneficiary's share). Paystack lists the transaction, with its
+  reference, **only inside the main-account settlement** (`GET /settlement?subaccount=none`
+  then `GET /settlement/:id/transactions`). The subaccount's own settlement
+  always returns an **empty** transaction list. KODEP's panel shows this under
+  "What Paystack returned".
+* No Paystack document links the two settlements, so KODEP only accepts a match
+  when **all** of these hold, otherwise the donation stays Pending payout and
+  the panel says why:
+  1. the donation's reference is in main settlement `N` (all of `N` was read);
+  2. Paystack lists a settlement `N+1` for **this beneficiary's subaccount**;
+  3. `N+1`'s amount equals, to the kobo, the beneficiary share of the
+     transactions in `N`. Paystack's own split figure is used when present;
+     otherwise the donation's recorded `settled_amount`. If `N` also holds other
+     donations to the same subaccount that are not being checked, the check
+     fails closed;
+  4. `N+1` has a status the platform recognises. **`N+1`'s status** decides the
+     result (`success` → Settled, `pending`/`processing` → Payout processing,
+     `failed` → Payout failed). The main settlement's own status is ignored: it
+     describes the platform's share, not the beneficiary's.
+* A subaccount settlement can also be matched the original way (its own list
+  contains the reference). That path is kept in case Paystack ever fills it in.
+* Calls to Paystack per request are capped (`PAYSTACK_CALL_BUDGET`, with a small
+  reserve so Save still works); if the cap is hit the panel says "run it again".
+* Nothing is ever marked Settled from an amount alone, from a successful charge,
+  or from a webhook.
+
+### Where payout states are shown
+
+| Place | What it shows |
+|---|---|
+| Public campaign page | `Amount Settled to Beneficiary: ₦X` (confirmed payouts only) and, below it, `Awaiting payout (expected): ₦Y` (Pending + Processing expected shares; each line is hidden at ₦0; failed payouts are never shown publicly) |
+| Admin campaigns table, Beneficiary payout column | Settled, Pending payout, **Payout processing** (own line), Failed, Unconfirmed (older) |
+| Admin campaigns table, Beneficiary column | `Paystack: verified` as a **green** badge, `Paystack: NOT verified` as a **yellow** badge, `not checked` as plain text |
+| Admin Overview cards | Amount settled, Pending payout (expected share, incl. processing), Failed |
+| Admin Recent donations | Payment: Successful · Beneficiary payout: *state* |
+| Check payouts panel | What Paystack returned (settlements, amounts, transaction counts), the main-account look, and a Save button. A processing-only change is labelled `Save N as "Payout processing" (not settled yet)` |
 
 | URL | Handler |
 |---|---|
@@ -223,16 +271,107 @@ set `RESEND_FROM_EMAIL` to your own domain.
 
 ## Project layout (Cloudflare branch)
 
+Current as of 27 October 2026 (50 tracked files).
+
 ```
-wrangler.jsonc      Worker + static-asset configuration (no secrets)
-src/index.js        router: /api/* → handlers, everything else → static assets
-api/                the same handlers, now (req, env) → Response
-lib/                shared helpers; new: http.js, web-crypto.js
-public/             the website (all HTML pages, admin/, images/)
-test/worker.test.js automated tests (npm test)
-supabase*.sql       database SQL (unchanged, already applied)
-.dev.vars.example   template for local secrets (copy to .dev.vars)
+kodep-fundraiser/
+├── wrangler.jsonc          Worker + static-asset configuration (no secrets)
+├── package.json            scripts: dev, deploy, check (dry-run build), test
+├── package-lock.json
+├── .assetsignore           keeps source/config out of the public asset upload
+├── .gitignore              node_modules, .wrangler, .dev.vars, .env
+├── .dev.vars.example       template for local secrets (copy to .dev.vars)
+├── README.md               this file
+│
+├── src/
+│   └── index.js            router: /api/* → handlers; everything else → static assets
+│
+├── api/                    handlers: (req, env) → Web Response   (11 routes)
+│   ├── campaign.js         public: one campaign (+ amount_settled, amount_awaiting_payout)
+│   ├── campaigns.js        public: campaign list
+│   ├── donations.js        public: recent donors
+│   ├── initialize-donation.js  public: starts a Paystack checkout server-side
+│   ├── paystack-webhook.js     verifies + records payments (never marks payouts)
+│   ├── progress.js         public: live totals (+ amount_settled, amount_awaiting_payout)
+│   ├── submit-campaign.js  public: visitor "Add a Patient" submission
+│   ├── track-campaign.js   public: private submission-status lookup
+│   └── admin/
+│       ├── auth.js             login / logout / session
+│       ├── campaigns.js        create / edit / list campaigns, analytics, image upload
+│       └── beneficiaries.js    beneficiary, verify, settlement, platform fee,
+│                               Paystack status, reconcile-payouts (Check payouts)
+│
+├── lib/                    shared helpers
+│   ├── admin-auth.js           session cookie + admin check
+│   ├── amount-settled.js       Amount Settled, Amount Awaiting Payout, admin totals, payout breakdown
+│   ├── beneficiary.js          creates a new, inert beneficiary row
+│   ├── campaign-images.js      upload / delete campaign photos in Storage
+│   ├── email.js                transactional emails via Resend (HTTPS API)
+│   ├── http.js                 Request → { method, query, headers, body }, JSON responses
+│   ├── paystack.js             banks, subaccounts, checkout, settlement lookups
+│   ├── payout-evidence.js      payout status rules + findPayoutEvidence (main/subaccount matching)
+│   ├── supabase-paging.js     paged reads (1000-row limit) and RPC calls
+│   └── web-crypto.js           Web Crypto helpers (replaces Node crypto)
+│
+├── public/                 the website, served as static assets
+│   ├── index.html              homepage (campaign cards, filters, load more)
+│   ├── campaign.html           campaign page (donate, fee preview, settled + awaiting lines)
+│   ├── submit-campaign.html    visitor "Add a Patient" form (goal note under the goal box)
+│   ├── track.html              private tracking page
+│   ├── about-us.html  contact-us.html  our-mission.html  our-vision.html
+│   ├── faqs.html  privacy-policy.html  terms.html
+│   ├── images/images.jpg
+│   ├── .assetsignore
+│   └── admin/
+│       ├── login.html          admin login (eye button shows / hides the password)
+│       └── dashboard.html      admin dashboard (campaigns, payouts, beneficiary modal,
+│                               Check payouts panel, Edit campaign form)
+│
+├── test/
+│   └── worker.test.js      61 automated tests (npm test): mocked Supabase / Paystack / Resend
+│
+└── supabase.sql, supabase-settled-amount.sql, supabase-tracking.sql,
+    supabase-scale-upgrade.sql, supabase-payout-status.sql
+                            database SQL, all already applied (do not re-run)
 ```
+
+### Checking a change before it goes live
+
+```bash
+npm test         # 61 tests, no network, no real keys
+npm run check    # production-equivalent bundle: wrangler deploy --dry-run
+```
+
+`npm run check` ending with "Total Upload" means the bundle resolves every
+import. Do this before committing.
+
+### Uploading changes through the GitHub website
+
+Every upload or delete on the GitHub website is its own commit, and Cloudflare
+builds **each** commit. If a file imports another file that is not in the
+branch yet, that commit's build fails ("Could not resolve …"). A failed build
+does **not** replace the live site, and "Retry build" re-runs the same old
+commit, so the fix is to upload the missing file and let a new commit build.
+To avoid it: upload the file that is **imported** first (for example
+`lib/payout-evidence.js` before `api/admin/beneficiaries.js`), commit directly
+to `cloudflare-migration`, never to `main`, and keep file names exactly.
+
+## Changes since the migration (October 2026)
+
+| Area | Change | Files |
+|---|---|---|
+| Build | Fixed "Could not resolve …/payout-evidence.js"; the payout rules now live in one file | `lib/payout-evidence.js`, `api/admin/beneficiaries.js`, `test/worker.test.js` |
+| Check payouts | Shows what Paystack returned (settlement ids, statuses, dates, amounts, transaction counts), retries without a start date, shows errors in the panel | `lib/payout-evidence.js`, `api/admin/beneficiaries.js`, `public/admin/dashboard.html` |
+| Check payouts | Matches donations through the **main-account settlement** and the paired subaccount payout (rule above); records `payout_confirmed_via = paystack_main_settlement_pair` | `lib/payout-evidence.js`, `api/admin/beneficiaries.js` |
+| Check payouts | Processing-only saves are labelled; Payout processing has its own line in the admin table | `public/admin/dashboard.html` |
+| Public page | New `Awaiting payout (expected): ₦X` line below Amount Settled; `amount_awaiting_payout` added to `/api/campaign` and `/api/progress` | `lib/amount-settled.js`, `api/campaign.js`, `api/progress.js`, `public/campaign.html` |
+| Admin dashboard | Edit campaign **Save** works again (hidden beneficiary inputs no longer block the form) | `public/admin/dashboard.html` |
+| Admin dashboard | `Paystack: verified` green badge, `NOT verified` yellow | `public/admin/dashboard.html` |
+| Admin login | Eye button inside the password box | `public/admin/login.html` |
+| Visitor form | Note under "Fundraising goal" | `public/submit-campaign.html` |
+| Tests | 28 → 61 tests, including fixed regressions for each item above | `test/worker.test.js` |
+
+No database schema change was made in this period.
 
 ---
 
@@ -719,6 +858,10 @@ few seconds later the totals and Recent Donors list update.
 
 ## Package contents and which files are the latest
 
+> **Historical (Vercel era, 5 October 2026).** This table is kept for background.
+> The current file list and what changed since is under "Project layout" and
+> "Changes since the migration" near the top of this file.
+
 This zip was assembled on 5 October 2026 directly from the project's
 GitHub repository (`Fundraiser--main`), so every file in it is the
 committed, live version. The recent rounds are already in the repo and
@@ -744,6 +887,12 @@ exactly 11 files, so the project uses 11 of the 12 Vercel Hobby functions.
 
 ## Project structure
 
+> **Historical (Vercel era).** This tree predates the Cloudflare branch: files
+> such as `index.html` now live under `public/`, `admin/` is `public/admin/`, and
+> `src/index.js`, `wrangler.jsonc`, `lib/http.js`, `lib/web-crypto.js`,
+> `lib/payout-evidence.js` and `test/worker.test.js` did not exist. Use
+> "Project layout (Cloudflare branch)" near the top for the current tree.
+>
 > **Note on Vercel's Hobby plan function limit:** Vercel's Hobby plan
 > caps a deployment at **12 Serverless Functions** (each file under
 > `api/` counts as one). This project intentionally consolidates several
@@ -1214,9 +1363,12 @@ routed to that campaign's beneficiary subaccount, and ₦0 if none.
 - **History.** Donations made before this feature keep
   `settled_amount = 0`; the database holds no reliable settlement
   figure for them, so none was invented.
-- **Meaning.** "Settled" here is the share Paystack allocated to the
-  beneficiary's subaccount for each payment. Paystack pays that out to
-  the bank on its own settlement schedule. It is independent of the
+- **Meaning (updated October 2026).** The public figure now counts a donation's
+  `settled_amount` only once its `payout_status` is `settled`, i.e. confirmed by
+  Paystack's Settlement API through **Check payouts** (see "Payment status vs.
+  beneficiary payout status"). The older wording above, where every split
+  payment counted as settled, no longer applies. The amounts still waiting are
+  shown separately as `Awaiting payout (expected)`. It is independent of the
   Verified badge, which depends only on `verification_status`.
 
 ## Supabase 1000 row response limit
